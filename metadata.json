@@ -1,0 +1,9 @@
+
+{
+  "requestFramePermissions": [
+    "microphone",
+    "geolocation"
+  ],
+  "name": "Echoes & Circles | Sovereign Sanctuary",
+  "description": "An urban mental health sanctuary with encrypted identity, AI mood synthesis, and democratic funding."
+}

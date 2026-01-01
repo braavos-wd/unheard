@@ -34,29 +34,32 @@ const EchoCircles: React.FC<Props> = ({ currentUser, onJoin, activeRoom }) => {
 
   // SOCKET CONNECTION LOGIC
   useEffect(() => {
+    let socketInstance: any = null;
     if (activeRoom) {
       const socketUrl = window.location.hostname === 'localhost' ? 'http://localhost:4000' : '/';
-      socketRef.current = io(socketUrl);
+      socketInstance = io(socketUrl);
+      socketRef.current = socketInstance;
       
-      socketRef.current.emit('join_circle', { 
+      socketInstance.emit('join_circle', { 
         roomId: activeRoom.id, 
         userId: currentUser.id, 
         name: currentUser.name 
       });
 
-      socketRef.current.on('presence_update', (members: any[]) => {
+      socketInstance.on('presence_update', (members: any[]) => {
         setLiveMembers(members);
       });
 
-      socketRef.current.on('user_speaking', ({ socketId, isSpeaking }: any) => {
+      socketInstance.on('user_speaking', ({ socketId, isSpeaking }: any) => {
         setLiveMembers(prev => prev.map(m => m.socketId === socketId ? { ...m, isSpeaking } : m));
       });
 
       return () => {
-        socketRef.current?.disconnect();
+        socketInstance?.disconnect();
       };
     }
-    return () => {};
+    // Explicitly return undefined if no room is active to satisfy TS7030
+    return undefined;
   }, [activeRoom, currentUser]);
 
   useEffect(() => {

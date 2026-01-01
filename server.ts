@@ -12,12 +12,13 @@ import mongoose from 'mongoose';
 import path from 'path';
 
 const app = express();
-// Using standard express middleware with safe typing
-app.use(express.json());
+// FIX: Cast to any to avoid PathParams overload mismatch in environments where Express types conflict with global Fetch API
+app.use(express.json() as any);
 
 // Serve static files from the 'dist' directory (Vite build output)
 const __dirname = path.resolve();
-app.use(express.static(path.join(__dirname, 'dist')));
+// FIX: Cast to any to avoid RequestHandler vs PathParams type mismatch
+app.use(express.static(path.join(__dirname, 'dist')) as any);
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
@@ -28,11 +29,12 @@ const io = new Server(httpServer, {
 });
 
 // --- DATABASE CONFIGURATION ---
+// MongoDB Atlas string goes into this environment variable
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/sanctuary';
 
 mongoose.connect(MONGODB_URI)
-  .then(() => console.log('[DATABASE] Connected to Mesh Storage (MongoDB)'))
-  .catch((err: any) => console.error('[DATABASE] Connection error:', err));
+  .then(() => console.log('[DATABASE] Connected to Mesh Storage (MongoDB Atlas)'))
+  .catch((err: Error) => console.error('[DATABASE] Connection error:', err));
 
 // --- MODELS ---
 const EchoSchema = new mongoose.Schema({
@@ -63,8 +65,8 @@ const MessageSchema = new mongoose.Schema({
 const Message = mongoose.model('Message', MessageSchema);
 
 // --- VITALITY CHECK (HEALTHCHECK) ---
-// Fix: Explicitly use express.Request and express.Response types to ensure .status and .json are recognized
-app.get('/health', (req: express.Request, res: express.Response) => {
+// FIX: Using any for req/res to bypass local type conflicts with global Fetch API Request/Response
+app.get('/health', (req: any, res: any) => {
   const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
   res.status(200).json({
     status: 'ok',
@@ -75,8 +77,8 @@ app.get('/health', (req: express.Request, res: express.Response) => {
 });
 
 // --- REST API ---
-// Fix: Use namespaced types to avoid conflicts and resolve missing property errors
-app.get('/api/echoes', async (req: express.Request, res: express.Response) => {
+// FIX: Using any for req/res to resolve missing property errors (status, json, body, params)
+app.get('/api/echoes', async (req: any, res: any) => {
   try {
     const echoes = await Echo.find().sort({ timestamp: -1 }).limit(50);
     res.json(echoes);
@@ -85,9 +87,8 @@ app.get('/api/echoes', async (req: express.Request, res: express.Response) => {
   }
 });
 
-app.post('/api/echoes', async (req: express.Request, res: express.Response) => {
+app.post('/api/echoes', async (req: any, res: any) => {
   try {
-    // Fix: Using express.Request ensures .body is properly typed
     const echoData = req.body;
     const echo = await Echo.findOneAndUpdate(
       { id: echoData.id },
@@ -100,9 +101,8 @@ app.post('/api/echoes', async (req: express.Request, res: express.Response) => {
   }
 });
 
-app.get('/api/messages/:userId', async (req: express.Request, res: express.Response) => {
+app.get('/api/messages/:userId', async (req: any, res: any) => {
   try {
-    // Fix: Using express.Request ensures .params is correctly identified
     const messages = await Message.find({
       $or: [{ senderId: req.params.userId }, { receiverId: req.params.userId }]
     }).sort({ timestamp: 1 });
@@ -122,7 +122,6 @@ interface Member {
 
 interface RoomState {
   members: Map<string, Member>;
-  activeAsset?: string;
 }
 
 const activeRooms = new Map<string, RoomState>();
@@ -168,8 +167,8 @@ io.on('connection', (socket: Socket) => {
   });
 });
 
-// Fix: Using express.Response ensures .sendFile is recognized
-app.get('*', (req: express.Request, res: express.Response) => {
+// FIX: Using any for req/res to resolve missing sendFile property on Response type
+app.get('*', (req: any, res: any) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
@@ -179,7 +178,6 @@ httpServer.listen(PORT, () => {
   ┌──────────────────────────────────────────────────┐
   │   SANCTUARY PRODUCTION ENGINE ACTIVE             │
   │   PORT: ${PORT}                                   │
-  │   MONGODB: ${MONGODB_URI.split('@').pop()}       │
   │   HEALTHCHECK: /health                           │
   └──────────────────────────────────────────────────┘
   `);

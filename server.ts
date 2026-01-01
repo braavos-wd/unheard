@@ -9,12 +9,16 @@ import { Server, Socket } from 'socket.io';
 import mongoose from 'mongoose';
 import path from 'path';
 import fs from 'fs';
+import cors from 'cors';
 
 const app = express();
 const httpServer = createServer(app);
 
 // 1. SYSTEM LOGGING & MIDDLEWARE
 console.log('\x1b[36m%s\x1b[0m', '--- SANCTUARY ENGINE INITIALIZING ---');
+
+// Enable CORS for cross-origin development (Vite -> Express)
+app.use(cors());
 
 app.use((req: any, res: any, next: any) => {
   if (req.path !== '/health') {
@@ -38,7 +42,8 @@ app.get('/health', (req: any, res: any) => {
 });
 
 // 3. DATABASE CONNECTION
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/sanctuary';
+// Note: localhost on Node 17+ often resolves to IPv6 (::1). Using 127.0.0.1 is more robust for local dev.
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/sanctuary';
 console.log(`[DATABASE] Connecting to storage mesh...`);
 
 mongoose.connect(MONGODB_URI)
@@ -46,7 +51,7 @@ mongoose.connect(MONGODB_URI)
   .catch((err: Error) => console.error('\x1b[31m%s\x1b[0m', '[DATABASE] Connection Failure:', err.message));
 
 // --- DATA MODELS ---
-const Echo = mongoose.model('Echo', new mongoose.Schema({
+const Echo = mongoose.models.Echo || mongoose.model('Echo', new mongoose.Schema({
   id: { type: String, unique: true },
   authorId: String,
   authorName: String,
@@ -57,7 +62,7 @@ const Echo = mongoose.model('Echo', new mongoose.Schema({
   tags: [String]
 }));
 
-const MessageModel = mongoose.model('Message', new mongoose.Schema({
+const MessageModel = mongoose.models.Message || mongoose.model('Message', new mongoose.Schema({
   id: { type: String, unique: true },
   senderId: String,
   receiverId: String,
@@ -80,7 +85,8 @@ app.get('/api/echoes', async (req: any, res: any) => {
 
 app.post('/api/echoes', async (req: any, res: any) => {
   try {
-    const echo = await Echo.findOneAndUpdate({ id: req.body.id }, req.body, { upsert: true, new: true });
+    // FIX: Cast filter object to any to bypass Mongoose Query property check conflicts in findOneAndUpdate
+    const echo = await Echo.findOneAndUpdate({ id: req.body.id } as any, req.body, { upsert: true, new: true });
     res.status(201).json(echo);
   } catch (err) {
     res.status(400).json({ error: 'Broadcast failed' });
@@ -89,9 +95,10 @@ app.post('/api/echoes', async (req: any, res: any) => {
 
 app.get('/api/messages/:userId', async (req: any, res: any) => {
   try {
+    // FIX: Cast complex $or filter object to any to satisfy Mongoose's find() overload resolution
     const messages = await MessageModel.find({
       $or: [{ senderId: req.params.userId }, { receiverId: req.params.userId }]
-    }).sort({ timestamp: 1 });
+    } as any).sort({ timestamp: 1 });
     res.json(messages);
   } catch (err) {
     res.status(500).json({ error: 'Whisper mesh offline' });
@@ -159,16 +166,25 @@ if (fs.existsSync(distPath)) {
   app.use(express.static(distPath, { index: false }) as any);
 }
 
-// CRITICAL FIX FOR EXPRESS 5:
-// Catch-all route must be written as '(.*)' instead of '*'
-app.get('(.*)', (req: any, res: any, next: any) => {
-  if (req.path.startsWith('/api') || req.path.includes('.')) return next();
+/**
+ * ROBUST CATCH-ALL MIDDLEWARE (SPA FALLBACK)
+ * By using a general middleware instead of app.get('*'), we bypass 
+ * the path-to-regexp PathErrors often seen in Express 5 environments.
+ */
+app.use((req: any, res: any, next: any) => {
+  // Only handle GET requests that aren't API calls and aren't static files
+  if (req.method !== 'GET' || req.path.startsWith('/api') || req.path.includes('.')) {
+    return next();
+  }
 
   const indexPath = path.join(distPath, 'index.html');
   const finalPath = fs.existsSync(indexPath) ? indexPath : path.join(__dirname, 'index.html');
 
   fs.readFile(finalPath, 'utf8', (err, html) => {
-    if (err) return res.status(500).send('Sanctuary Loading Error');
+    if (err) {
+      console.error('[ERROR] Failed to read index.html:', err);
+      return res.status(500).send('Sanctuary Loading Error');
+    }
 
     // Inject runtime variables into the browser
     const injection = `

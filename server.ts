@@ -33,9 +33,7 @@ let isDbConnected = false;
 
 console.log(`[DATABASE] Attempting connection to: ${MONGODB_URI.split('@').pop()}`);
 
-mongoose.connect(MONGODB_URI, {
-  serverSelectionTimeoutMS: 5000, // Don't hang forever if DB is down
-})
+mongoose.connect(MONGODB_URI)
   .then(() => {
     isDbConnected = true;
     console.log('\x1b[32m%s\x1b[0m', '[DATABASE] Connection Established (Atlas/Local)');
@@ -47,7 +45,7 @@ mongoose.connect(MONGODB_URI, {
   });
 
 // --- DATA MODELS ---
-const Echo = mongoose.models.Echo || mongoose.model('Echo', new mongoose.Schema({
+const EchoSchema = new mongoose.Schema({
   id: { type: String, unique: true },
   authorId: String,
   authorName: String,
@@ -60,9 +58,10 @@ const Echo = mongoose.models.Echo || mongoose.model('Echo', new mongoose.Schema(
     plays: { type: Number, default: 0 }
   },
   tags: [String]
-}));
+});
+const Echo = mongoose.models.Echo || mongoose.model('Echo', EchoSchema);
 
-const MessageModel = mongoose.models.Message || mongoose.model('Message', new mongoose.Schema({
+const MessageSchema = new mongoose.Schema({
   id: { type: String, unique: true },
   senderId: String,
   receiverId: String,
@@ -71,12 +70,13 @@ const MessageModel = mongoose.models.Message || mongoose.model('Message', new mo
   type: { type: String, default: 'text' },
   sharedCircleId: String,
   isRead: { type: Boolean, default: false }
-}));
+});
+const MessageModel = mongoose.models.Message || mongoose.model('Message', MessageSchema);
 
 // --- REST API ENDPOINTS (RESILIENT) ---
 app.get('/api/echoes', async (req: any, res: any) => {
   try {
-    if (!isDbConnected) return res.json([]); // Return empty list if DB is down instead of 500
+    if (!isDbConnected) return res.json([]);
     const echoes = await Echo.find().sort({ timestamp: -1 }).limit(50);
     res.json(echoes);
   } catch (err) {
@@ -162,22 +162,33 @@ io.on('connection', (socket: Socket) => {
 const __dirname = path.resolve();
 const distPath = path.join(__dirname, 'dist');
 
+// Serve static assets first
 if (fs.existsSync(distPath)) {
-  app.use('/assets', express.static(path.join(distPath, 'assets')) as any);
-  app.use(express.static(distPath, { index: false }) as any);
+  app.use(express.static(distPath));
 }
 
-app.use((req: any, res: any, next: any) => {
-  if (req.method !== 'GET' || req.path.startsWith('/api') || req.path.includes('.')) return next();
+// Fallback for SPA routing - using app.get('*') for Express 5 compatibility
+// Fix: Added explicit 'any' types to req, res, and next to resolve TypeScript overload resolution failure.
+app.get('*', (req: any, res: any, next: any) => {
+  // Ignore API calls or files with extensions
+  if (req.path.startsWith('/api') || req.path.includes('.')) {
+    return next();
+  }
 
   const indexPath = path.join(distPath, 'index.html');
-  const finalPath = fs.existsSync(indexPath) ? indexPath : path.join(__dirname, 'index.html');
+  const fallbackPath = path.join(__dirname, 'index.html');
+  const finalPath = fs.existsSync(indexPath) ? indexPath : fallbackPath;
 
-  fs.readFile(finalPath, 'utf8', (err, html) => {
-    if (err) return res.status(500).send('Sanctuary Loading Error');
-    const injection = `<script>window.process = { env: { API_KEY: ${JSON.stringify(process.env.API_KEY || '')} } };</script>`;
-    res.send(html.replace('<head>', `<head>${injection}`));
-  });
+  if (fs.existsSync(finalPath)) {
+    fs.readFile(finalPath, 'utf8', (err, html) => {
+      if (err) return res.status(500).send('Sanctuary Loading Error');
+      // Inject API Key into window object for the frontend
+      const injection = `<script>window.process = { env: { API_KEY: ${JSON.stringify(process.env.API_KEY || '')} } };</script>`;
+      res.send(html.replace('<head>', `<head>${injection}`));
+    });
+  } else {
+    res.status(404).send('Sanctuary Entry Not Found');
+  }
 });
 
 const PORT = process.env.PORT || 4000;

@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { User, EchoEntry } from '../types';
 import { db } from '../services/db';
 
@@ -12,6 +12,16 @@ const ProfileView: React.FC<Props> = ({ user, echoes }) => {
   const [activeTab, setActiveTab] = useState<'echoes' | 'following' | 'impact' | 'circles'>('echoes');
   const [isVaultLocked, setIsVaultLocked] = useState(!sessionStorage.getItem('sanctuary_key_active'));
   const [vaultKey, setVaultKey] = useState('');
+  const [allPulses, setAllPulses] = useState<EchoEntry[]>([]);
+
+  // Fetch all pulses for author discovery
+  useEffect(() => {
+    const fetchAll = async () => {
+      const pulses = await db.getPulses();
+      setAllPulses(pulses);
+    };
+    fetchAll();
+  }, []);
 
   const votingImpact = Math.floor(user.auraScore / 100);
 
@@ -28,13 +38,13 @@ const ProfileView: React.FC<Props> = ({ user, echoes }) => {
   }, [user.id]);
 
   const followedAuthors = useMemo(() => {
-    const allEchoes = db.getPulses();
+    // Fixed: Using state allPulses instead of async db call inside useMemo
     const authors: Record<string, string> = {};
-    allEchoes.forEach(e => {
+    allPulses.forEach(e => {
       if (user.following?.includes(e.authorId)) authors[e.authorId] = e.authorName;
     });
     return Object.entries(authors).map(([id, name]) => ({ id, name }));
-  }, [user.following]);
+  }, [user.following, allPulses]);
 
   if (isVaultLocked) {
     return (

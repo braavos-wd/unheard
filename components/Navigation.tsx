@@ -1,4 +1,3 @@
-
 import React from 'react';
 
 interface Props {
@@ -17,21 +16,21 @@ const Navigation: React.FC<Props> = ({ activeView, setActiveView }) => {
   ];
 
   return (
-    <nav className="fixed bottom-0 left-0 w-full bg-white/95 backdrop-blur-2xl border-t border-border z-[200] px-6 py-6 flex justify-center shadow-[0_-10px_40px_rgba(0,0,0,0.03)]">
-      <div className="flex gap-8 sm:gap-16">
+    <nav className="fixed bottom-0 left-0 w-full bg-white/95 backdrop-blur-2xl border-t border-border z-[200] px-4 sm:px-6 py-4 sm:py-6 flex justify-center shadow-[0_-10px_40px_rgba(0,0,0,0.03)]">
+      <div className="flex gap-4 sm:gap-16 w-full max-w-lg justify-between sm:justify-center">
         {tabs.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveView(tab.id)}
-            className={`flex flex-col items-center gap-2 group transition-all ${
-              activeView === tab.id ? 'text-accent scale-110' : 'text-dim hover:text-accent'
+            className={`flex flex-col items-center gap-1.5 sm:gap-2 group transition-all flex-1 sm:flex-initial ${
+              activeView === tab.id ? 'text-accent scale-105 sm:scale-110' : 'text-dim hover:text-accent'
             }`}
           >
-            <svg className={`w-6 h-6 ${activeView === tab.id ? 'stroke-2' : 'stroke-1'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className={`w-5 h-5 sm:w-6 sm:h-6 ${activeView === tab.id ? 'stroke-2' : 'stroke-1'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d={tab.icon} />
             </svg>
-            <span className="text-[9px] font-mono uppercase tracking-[0.2em] font-bold">{tab.label}</span>
-            {activeView === tab.id && <div className="w-1.5 h-1.5 bg-accent rounded-full mt-1 animate-pulse"></div>}
+            <span className="text-[7px] sm:text-[9px] font-mono uppercase tracking-widest font-black text-center">{tab.label}</span>
+            {activeView === tab.id && <div className="w-1 h-1 sm:w-1.5 sm:h-1.5 bg-accent rounded-full mt-0.5 animate-pulse"></div>}
           </button>
         ))}
       </div>

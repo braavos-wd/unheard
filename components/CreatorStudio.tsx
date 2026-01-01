@@ -1,4 +1,3 @@
-
 import React, { useState, useRef } from 'react';
 import { User, EchoEntry } from '../types';
 import { geminiService } from '../services/gemini';
@@ -97,11 +96,15 @@ const CreatorStudio: React.FC<Props> = ({ user, onPublish }) => {
     }
     setIsGuiding(true);
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: `User is writing a reflection: "${title} ${content}". Act as a Zen Sanctuary Guide. Provide one short, soulful ritualistic prompt (max 20 words) that helps them deepen this reflection. Avoid cliches.`
-    });
-    setRitualPrompt(response.text || null);
+    try {
+        const response = await ai.models.generateContent({
+          model: 'gemini-3-flash-preview',
+          contents: `User is writing a reflection: "${title} ${content}". Act as a Zen Sanctuary Guide. Provide one short, soulful ritualistic prompt (max 20 words) that helps them deepen this reflection. Avoid cliches.`
+        });
+        setRitualPrompt(response.text || null);
+    } catch (e) {
+        setRitualPrompt("Breathe. Your words have weight.");
+    }
     setIsGuiding(false);
   };
 
@@ -123,35 +126,35 @@ const CreatorStudio: React.FC<Props> = ({ user, onPublish }) => {
   };
 
   return (
-    <div className="max-w-6xl mx-auto animate-in fade-in duration-500">
-      <div className="flex flex-col lg:flex-row gap-12">
+    <div className="max-w-6xl mx-auto animate-in fade-in duration-500 px-2 sm:px-4">
+      <div className="flex flex-col lg:flex-row gap-8 sm:gap-12 mb-20 sm:mb-0">
         <div className="flex-1">
-          <div className="mb-16">
-            <h2 className="text-5xl font-bold tracking-tighter uppercase leading-none mb-4">Reflect</h2>
-            <p className="text-sm text-dim max-w-md font-mono uppercase tracking-widest">Voice-to-Resonance bridge active.</p>
+          <div className="mb-8 sm:mb-16">
+            <h2 className="text-4xl sm:text-5xl lg:text-7xl font-bold tracking-tighter uppercase leading-none mb-4">Reflect</h2>
+            <p className="text-[10px] sm:text-sm text-dim max-w-md font-mono uppercase tracking-widest font-bold">Voice-to-Resonance bridge active.</p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 mb-8 sm:mb-12">
             <button 
               onClick={isRecording ? stopRecording : startRecording}
-              className={`h-48 brutalist-border relative overflow-hidden flex flex-col items-center justify-center gap-6 transition-all ${
+              className={`h-32 sm:h-48 brutalist-border relative overflow-hidden flex flex-col items-center justify-center gap-4 sm:gap-6 transition-all ${
                 isRecording ? 'bg-serene/5 border-serene shadow-[0_0_30px_rgba(59,130,246,0.1)]' : 'bg-white hover:bg-surface'
               }`}
             >
               <canvas ref={canvasRef} className="absolute inset-0 w-full h-full opacity-30 pointer-events-none" />
-              <div className={`w-12 h-12 border-2 rounded-full flex items-center justify-center relative z-10 ${isRecording ? 'border-serene animate-pulse' : 'border-accent'}`}>
-                <div className={`w-4 h-4 rounded-full ${isRecording ? 'bg-serene' : 'bg-accent'}`}></div>
+              <div className={`w-8 h-8 sm:w-12 sm:h-12 border-2 rounded-full flex items-center justify-center relative z-10 ${isRecording ? 'border-serene animate-pulse' : 'border-accent'}`}>
+                <div className={`w-3 h-3 sm:w-4 sm:h-4 rounded-full ${isRecording ? 'bg-serene' : 'bg-accent'}`}></div>
               </div>
-              <span className="font-mono text-[10px] uppercase tracking-widest font-bold relative z-10">
-                {isRecording ? 'Capturing Frequency...' : 'Capture Voice Reflection'}
+              <span className="font-mono text-[8px] sm:text-[10px] uppercase tracking-widest font-bold relative z-10">
+                {isRecording ? 'Capturing...' : 'Voice Capture'}
               </span>
             </button>
 
-            <div className="brutalist-border bg-white p-8 flex flex-col justify-center">
-              <span className="text-[10px] font-mono text-dim uppercase mb-4 tracking-widest">Studio Atmosphere</span>
-              <div className="grid grid-cols-2 gap-3">
+            <div className="hidden md:flex brutalist-border bg-white p-6 sm:p-8 flex-col justify-center">
+              <span className="text-[10px] font-mono text-dim uppercase mb-4 tracking-widest font-bold">Studio Atmosphere</span>
+              <div className="grid grid-cols-2 gap-2 sm:gap-3">
                 {['Quietude', 'Clarity', 'Raw Intensity', 'Healing'].map(m => (
-                  <button key={m} className="py-2 border border-border font-mono text-[9px] uppercase hover:border-accent transition-colors">
+                  <button key={m} className="py-2 border border-border font-mono text-[8px] sm:text-[9px] uppercase hover:border-accent transition-colors">
                     {m}
                   </button>
                 ))}
@@ -159,12 +162,12 @@ const CreatorStudio: React.FC<Props> = ({ user, onPublish }) => {
             </div>
           </div>
 
-          <div className="space-y-8 bg-white p-12 brutalist-border relative">
+          <div className="space-y-6 sm:space-y-8 bg-white p-6 sm:p-12 brutalist-border relative">
             {isProcessing && (
-              <div className="absolute inset-0 bg-white/90 backdrop-blur-md z-10 flex flex-col items-center justify-center text-center p-12">
-                 <div className="w-16 h-16 border-4 border-serene border-t-transparent animate-spin rounded-full mb-8"></div>
-                 <h4 className="text-xl font-bold uppercase tracking-tighter mb-2">Distilling Frequency</h4>
-                 <p className="font-mono text-[10px] uppercase tracking-widest text-dim">Gemini is translating your soul into scripture...</p>
+              <div className="absolute inset-0 bg-white/90 backdrop-blur-md z-10 flex flex-col items-center justify-center text-center p-6">
+                 <div className="w-10 h-10 sm:w-16 sm:h-16 border-4 border-serene border-t-transparent animate-spin rounded-full mb-6"></div>
+                 <h4 className="text-lg sm:text-xl font-bold uppercase tracking-tighter mb-2">Distilling Frequency</h4>
+                 <p className="font-mono text-[8px] sm:text-[10px] uppercase tracking-widest text-dim font-bold">Translating truth...</p>
               </div>
             )}
 
@@ -173,28 +176,28 @@ const CreatorStudio: React.FC<Props> = ({ user, onPublish }) => {
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Reflective Title..."
-              className="w-full bg-transparent text-3xl font-bold uppercase tracking-tighter border-b-2 border-border pb-6 focus:border-accent outline-none transition-all"
+              className="w-full bg-transparent text-xl sm:text-3xl font-bold uppercase tracking-tighter border-b-2 border-border pb-4 sm:pb-6 focus:border-accent outline-none transition-all placeholder:text-zinc-100"
             />
             
             <textarea 
               value={content}
               onChange={(e) => setContent(e.target.value)}
-              placeholder="Speak your truth or type it here..."
-              className="w-full bg-transparent text-xl font-sans leading-relaxed min-h-[400px] outline-none resize-none"
+              placeholder="Speak your truth..."
+              className="w-full bg-transparent text-base sm:text-xl font-sans leading-relaxed min-h-[300px] sm:min-h-[400px] outline-none resize-none"
             />
 
-            <div className="pt-10 flex justify-between items-center">
+            <div className="pt-6 sm:pt-10 flex flex-col sm:flex-row justify-between items-center gap-6">
               <button 
                 onClick={getGuidePrompt}
-                className="group font-mono text-[10px] uppercase tracking-widest text-serene hover:text-accent transition-colors flex items-center gap-2"
+                className="w-full sm:w-auto font-mono text-[9px] sm:text-[10px] uppercase tracking-widest text-serene font-black flex items-center justify-center gap-2 border-b border-serene sm:border-transparent"
               >
-                <svg className="w-4 h-4 group-hover:rotate-12 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
                 Ritual Guidance
               </button>
               <button 
                 onClick={publish}
                 disabled={!title || !content}
-                className="px-16 py-5 bg-accent text-white font-mono text-xs uppercase tracking-[0.3em] hover:bg-zinc-800 transition-all disabled:opacity-10 shadow-xl"
+                className="w-full sm:w-auto px-10 sm:px-16 py-4 sm:py-5 bg-accent text-white font-mono text-[10px] sm:text-xs uppercase tracking-[0.3em] font-bold hover:bg-zinc-800 transition-all disabled:opacity-10 shadow-xl"
               >
                 Publish Echo
               </button>
@@ -202,31 +205,31 @@ const CreatorStudio: React.FC<Props> = ({ user, onPublish }) => {
           </div>
         </div>
 
-        <div className="lg:w-80 pt-16">
-           <div className="brutalist-border p-10 bg-surface sticky top-32">
-              <h3 className="text-xs font-mono uppercase tracking-[0.4em] mb-8 border-b border-border pb-4 font-bold text-accent">Sanctuary Mirror</h3>
+        <div className="lg:w-80 pt-0 lg:pt-16">
+           <div className="brutalist-border p-6 sm:p-10 bg-surface lg:sticky lg:top-32">
+              <h3 className="text-[10px] font-mono uppercase tracking-[0.3em] mb-6 sm:mb-8 border-b border-border pb-4 font-black text-accent">Sanctuary Mirror</h3>
               
               {ritualPrompt ? (
                 <div className="animate-in fade-in slide-in-from-top-4">
-                  <p className="text-sm italic text-accent leading-relaxed mb-10">
+                  <p className="text-xs sm:text-sm italic text-accent leading-relaxed mb-8">
                     "{ritualPrompt}"
                   </p>
                   <button 
                     onClick={() => setRitualPrompt(null)}
-                    className="text-[9px] font-mono uppercase tracking-widest text-serene font-bold border-b border-serene"
+                    className="text-[8px] sm:text-[9px] font-mono uppercase tracking-widest text-serene font-black border-b border-serene"
                   >
                     Acknowledged
                   </button>
                 </div>
               ) : (
-                <div className="space-y-6 text-xs text-dim leading-relaxed font-mono uppercase tracking-widest">
+                <div className="space-y-4 sm:space-y-6 text-[9px] sm:text-xs text-dim leading-relaxed font-mono uppercase tracking-widest font-bold">
                    {isGuiding ? (
                      <div className="animate-pulse">Consulting the deep archives...</div>
                    ) : (
                      <>
                        <p>Urban silence is a choice.</p>
-                       <p>Recording your voice note creates a higher resonance bond.</p>
-                       <p>Aura Score: +10 on publish.</p>
+                       <p>Voice capture strengthens resonance.</p>
+                       <p>Aura: +10 on publish.</p>
                      </>
                    )}
                 </div>

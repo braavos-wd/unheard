@@ -16,14 +16,18 @@ COPY . .
 RUN npm run build
 
 # 2. Build Backend (Compile TS to JS for production stability)
-# 2. Build Backend (Compile TS to JS for production stability)
-RUN mkdir -p dist-server && \
+RUN echo "=== Starting backend build ===" && \
+    mkdir -p dist-server && \
     echo "Current directory: $(pwd)" && \
     echo "Files in current directory: $(ls -la)" && \
-    echo "Files in /app: $(ls -la /app)" && \
+    echo "\n=== Listing source files ===" && \
+    ls -la server.ts types.ts 2>/dev/null || echo "Source files not found!" && \
+    echo "\n=== Running TypeScript compiler ===" && \
     npx tsc --project tsconfig.server.json --listFiles && \
     npx tsc --project tsconfig.server.json && \
-    echo "Files in dist-server after compilation: $(ls -la dist-server/)"
+    echo "\n=== Compiled files in dist-server ===" && \
+    find dist-server -type f -exec ls -la {} \; || echo "No files found in dist-server" && \
+    echo "\n=== Build completed ==="
 
 # --- STAGE 2: Production Stage ---
 FROM node:20-slim
@@ -36,11 +40,24 @@ RUN npm install --omit=dev
 # Copy built frontend
 COPY --from=build /app/dist ./dist
 
-# Copy built backend files
-COPY --from=build /app/dist-server ./
+# Copy built backend files and verify
+COPY --from=build /app/dist-server/ ./
 
-# Copy types for any runtime needs (if applicable)
-COPY types.ts ./
+# Verify files were copied correctly
+RUN echo "\n=== Files in /app after copy ===" && \
+    ls -la && \
+    echo "\n=== Contents of dist-server ===" && \
+    ls -la dist-server/ 2>/dev/null || echo "dist-server not found" && \
+    echo "\n=== Checking for server.js ===" && \
+    if [ -f "dist-server/server.js" ]; then \
+        echo "server.js found!" && \
+        echo "First 5 lines of server.js:" && \
+        head -n 5 dist-server/server.js; \
+    else \
+        echo "ERROR: server.js not found in dist-server/" && \
+        echo "Current directory: $(pwd)" && \
+        find . -name "*.js" -o -name "*.ts" | sort; \
+    fi
 
 # Environment setup
 ENV PORT=4000

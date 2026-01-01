@@ -16,7 +16,6 @@ app.use(express.json() as any);
 
 // Serve static files from the 'dist' directory (Vite build output)
 const __dirname = path.resolve();
-// FIX: Casting express.static to any to avoid type mismatch with app.use overload in certain TS environments
 app.use(express.static(path.join(__dirname, 'dist')) as any);
 
 const httpServer = createServer(app);
@@ -28,7 +27,6 @@ const io = new Server(httpServer, {
 });
 
 // --- DATABASE CONFIGURATION ---
-// Sliplane will provide MONGODB_URI in process.env
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/sanctuary';
 
 mongoose.connect(MONGODB_URI)
@@ -63,6 +61,17 @@ const MessageSchema = new mongoose.Schema({
 });
 const Message = mongoose.model('Message', MessageSchema);
 
+// --- VITALITY CHECK (HEALTHCHECK) ---
+app.get('/health', (req, res) => {
+  const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
+  res.status(200).json({
+    status: 'ok',
+    uptime: process.uptime(),
+    database: dbStatus,
+    timestamp: Date.now()
+  });
+});
+
 // --- REST API ---
 app.get('/api/echoes', async (req, res) => {
   try {
@@ -76,7 +85,6 @@ app.get('/api/echoes', async (req, res) => {
 app.post('/api/echoes', async (req, res) => {
   try {
     const echoData = req.body;
-    // Use upsert to handle updates or new posts
     const echo = await Echo.findOneAndUpdate(
       { id: echoData.id },
       echoData,
@@ -114,8 +122,6 @@ interface RoomState {
 const activeRooms = new Map<string, RoomState>();
 
 io.on('connection', (socket) => {
-  console.log(`[NETWORK] Connection established: ${socket.id}`);
-
   socket.on('join_circle', ({ roomId, userId, name }) => {
     socket.join(roomId);
     if (!activeRooms.has(roomId)) {
@@ -130,7 +136,6 @@ io.on('connection', (socket) => {
     try {
       const msg = new Message(msgData);
       await msg.save();
-      // Targeted emit to the specific receiver's private channel
       io.emit(`whisper_inbox_${msgData.receiverId}`, msg);
     } catch (err) {
       console.error('[WHISPER] Broadcast failed');
@@ -148,7 +153,6 @@ io.on('connection', (socket) => {
   });
 });
 
-// For Sliplane/Docker, catch-all to serve index.html for SPA routing
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
@@ -160,6 +164,7 @@ httpServer.listen(PORT, () => {
   │   SANCTUARY PRODUCTION ENGINE ACTIVE             │
   │   PORT: ${PORT}                                   │
   │   MONGODB: ${MONGODB_URI.split('@').pop()}       │
+  │   HEALTHCHECK: /health                           │
   └──────────────────────────────────────────────────┘
   `);
 });

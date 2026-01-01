@@ -1,7 +1,6 @@
-
 /**
- * AURA & ECHO - PRODUCTION SERVER
- * Coordinates real-time resonance, presence, and encrypted whisper handshakes.
+ * AURA & ECHO - UNIFIED PRODUCTION SERVER
+ * Coordinates real-time resonance, presence, and static asset delivery.
  */
 
 import express from 'express';
@@ -14,8 +13,8 @@ import fs from 'fs';
 const app = express();
 const httpServer = createServer(app);
 
-// 1. STARTUP LOGGING
-console.log('\x1b[36m%s\x1b[0m', '--- SANCTUARY ENGINE STARTING ---');
+// 1. SYSTEM LOGGING & MIDDLEWARE
+console.log('\x1b[36m%s\x1b[0m', '--- SANCTUARY ENGINE INITIALIZING ---');
 
 app.use((req: any, res: any, next: any) => {
   if (req.path !== '/health') {
@@ -24,41 +23,29 @@ app.use((req: any, res: any, next: any) => {
   next();
 });
 
-// 2. HEALTH CHECK
+app.use(express.json() as any);
+
+// 2. HEALTH & STATUS
 app.get('/health', (req: any, res: any) => {
   const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
   res.status(200).json({
     status: 'ok',
     uptime: process.uptime(),
     database: dbStatus,
-    api_key_detected: !!process.env.API_KEY,
-    node_env: process.env.NODE_ENV || 'development'
+    api_key_synced: !!process.env.API_KEY,
+    mode: fs.existsSync(path.join(path.resolve(), 'dist')) ? 'UNIFIED_PRODUCTION' : 'DEVELOPMENT'
   });
 });
 
-// 3. MIDDLEWARE & STATIC ASSETS
-app.use(express.json() as any);
-
-const __dirname = path.resolve();
-const distPath = path.join(__dirname, 'dist');
-
-if (fs.existsSync(distPath)) {
-  console.log(`[SYSTEM] Production assets detected at ${distPath}`);
-  app.use('/assets', express.static(path.join(distPath, 'assets')) as any);
-  app.use(express.static(distPath, { index: false }) as any);
-} else {
-  console.log('[SYSTEM] Development mode: Serving from root (Vite expected on 5173)');
-}
-
-// 4. DATABASE CONNECTION
+// 3. DATABASE CONNECTION
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/sanctuary';
-console.log(`[DATABASE] Connecting to storage...`);
+console.log(`[DATABASE] Connecting to storage mesh...`);
 
 mongoose.connect(MONGODB_URI)
-  .then(() => console.log('\x1b[32m%s\x1b[0m', '[DATABASE] Connection Successful (MongoDB Atlas)'))
-  .catch((err: Error) => console.error('\x1b[31m%s\x1b[0m', '[DATABASE] Connection Error:', err.message));
+  .then(() => console.log('\x1b[32m%s\x1b[0m', '[DATABASE] Connected Successfully (Atlas)'))
+  .catch((err: Error) => console.error('\x1b[31m%s\x1b[0m', '[DATABASE] Connection Failure:', err.message));
 
-// --- MODELS ---
+// --- DATA MODELS ---
 const Echo = mongoose.model('Echo', new mongoose.Schema({
   id: { type: String, unique: true },
   authorId: String,
@@ -81,13 +68,13 @@ const MessageModel = mongoose.model('Message', new mongoose.Schema({
   isRead: { type: Boolean, default: false }
 }));
 
-// --- REST API ---
+// --- REST API ENDPOINTS ---
 app.get('/api/echoes', async (req: any, res: any) => {
   try {
     const echoes = await Echo.find().sort({ timestamp: -1 }).limit(50);
     res.json(echoes);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch echoes' });
+    res.status(500).json({ error: 'Sync failed' });
   }
 });
 
@@ -96,7 +83,7 @@ app.post('/api/echoes', async (req: any, res: any) => {
     const echo = await Echo.findOneAndUpdate({ id: req.body.id }, req.body, { upsert: true, new: true });
     res.status(201).json(echo);
   } catch (err) {
-    res.status(400).json({ error: 'Failed to save echo' });
+    res.status(400).json({ error: 'Broadcast failed' });
   }
 });
 
@@ -107,11 +94,11 @@ app.get('/api/messages/:userId', async (req: any, res: any) => {
     }).sort({ timestamp: 1 });
     res.json(messages);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch messages' });
+    res.status(500).json({ error: 'Whisper mesh offline' });
   }
 });
 
-// --- SOCKET.IO COORDINATION ---
+// --- REAL-TIME MESH (SOCKET.IO) ---
 const io = new Server(httpServer, {
   cors: { origin: "*", methods: ["GET", "POST"] }
 });
@@ -119,7 +106,7 @@ const io = new Server(httpServer, {
 const activeRooms = new Map<string, Map<string, any>>();
 
 io.on('connection', (socket: Socket) => {
-  console.log(`[SOCKET] Node connected: ${socket.id}`);
+  console.log(`[MESH] Node established: ${socket.id}`);
 
   socket.on('join_circle', ({ roomId, userId, name }: { roomId: string, userId: string, name: string }) => {
     socket.join(roomId);
@@ -128,7 +115,7 @@ io.on('connection', (socket: Socket) => {
     room.set(socket.id, { socketId: socket.id, userId, name, isSpeaking: false });
     
     io.to(roomId).emit('presence_update', Array.from(room.values()));
-    console.log(`[CIRCLE] ${name} joined ${roomId} (${room.size} active)`);
+    console.log(`[CIRCLE] ${name} joined sanctuary ${roomId}`);
   });
 
   socket.on('voice_activity', ({ roomId, isSpeaking }: { roomId: string, isSpeaking: boolean }) => {
@@ -144,9 +131,9 @@ io.on('connection', (socket: Socket) => {
       const msg = new MessageModel(msgData);
       await msg.save();
       io.emit(`whisper_inbox_${msgData.receiverId}`, msgData);
-      console.log(`[WHISPER] Encrypted transmission from ${msgData.senderId} to ${msgData.receiverId}`);
+      console.log(`[WHISPER] Encrypted transmission: ${socket.id} -> ${msgData.receiverId}`);
     } catch (err) {
-      console.error('[WHISPER] Save failed');
+      console.error('[WHISPER] Encryption/Save error');
     }
   });
 
@@ -158,24 +145,36 @@ io.on('connection', (socket: Socket) => {
         if (members.size === 0) activeRooms.delete(roomId);
       }
     });
-    console.log(`[SOCKET] Node disconnected: ${socket.id}`);
+    console.log(`[MESH] Node severed: ${socket.id}`);
   });
 });
 
-// 5. RUNTIME ENV INJECTION
-app.get('*', (req: any, res: any, next: any) => {
+// 4. UNIFIED SERVING & ENV INJECTION
+const __dirname = path.resolve();
+const distPath = path.join(__dirname, 'dist');
+
+if (fs.existsSync(distPath)) {
+  console.log('\x1b[32m%s\x1b[0m', `[SYSTEM] Production Mode: Serving assets from ${distPath}`);
+  app.use('/assets', express.static(path.join(distPath, 'assets')) as any);
+  app.use(express.static(distPath, { index: false }) as any);
+}
+
+// CRITICAL FIX FOR EXPRESS 5:
+// Catch-all route must be written as '(.*)' instead of '*'
+app.get('(.*)', (req: any, res: any, next: any) => {
   if (req.path.startsWith('/api') || req.path.includes('.')) return next();
 
   const indexPath = path.join(distPath, 'index.html');
   const finalPath = fs.existsSync(indexPath) ? indexPath : path.join(__dirname, 'index.html');
 
   fs.readFile(finalPath, 'utf8', (err, html) => {
-    if (err) return res.status(500).send('Sanctuary Initialization Error');
+    if (err) return res.status(500).send('Sanctuary Loading Error');
 
+    // Inject runtime variables into the browser
     const injection = `
     <script>
       window.process = { env: { API_KEY: ${JSON.stringify(process.env.API_KEY || '')} } };
-      console.log("[RUNTIME] Environment Synchronized.");
+      console.log("[RUNTIME] Sanctuary Environment Synced.");
     </script>`;
     
     res.send(html.replace('<head>', `<head>${injection}`));
@@ -186,10 +185,10 @@ const PORT = process.env.PORT || 4000;
 httpServer.listen(Number(PORT), '0.0.0.0', () => {
   console.log('\x1b[32m%s\x1b[0m', `
   ┌──────────────────────────────────────────────────┐
-  │   SANCTUARY PRODUCTION ENGINE: ONLINE            │
+  │   SANCTUARY ENGINE ONLINE                        │
   │   PORT: ${PORT}                                   │
-  │   BIND: 0.0.0.0                                  │
-  │   KEY: ${process.env.API_KEY ? 'DETACHED_MODE (SAFE)' : 'MISSING'}                   │
+  │   GEMINI: ${process.env.API_KEY ? 'SYNCHRONIZED' : 'PENDING KEY'}                    │
+  │   MODE: ${fs.existsSync(distPath) ? 'UNIFIED PRODUCTION' : 'STANDALONE API'}           │
   └──────────────────────────────────────────────────┘
   `);
 });

@@ -17,8 +17,8 @@ const httpServer = createServer(app);
 // 1. SYSTEM LOGGING & MIDDLEWARE
 console.log('\x1b[36m%s\x1b[0m', '--- SANCTUARY ENGINE INITIALIZING ---');
 
-// Enable CORS for cross-origin development (Vite -> Express)
 app.use(cors());
+app.use(express.json() as any);
 
 app.use((req: any, res: any, next: any) => {
   if (req.path !== '/health') {
@@ -27,28 +27,24 @@ app.use((req: any, res: any, next: any) => {
   next();
 });
 
-app.use(express.json() as any);
-
-// 2. HEALTH & STATUS
-app.get('/health', (req: any, res: any) => {
-  const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
-  res.status(200).json({
-    status: 'ok',
-    uptime: process.uptime(),
-    database: dbStatus,
-    api_key_synced: !!process.env.API_KEY,
-    mode: fs.existsSync(path.join(path.resolve(), 'dist')) ? 'UNIFIED_PRODUCTION' : 'DEVELOPMENT'
-  });
-});
-
-// 3. DATABASE CONNECTION
-// Note: localhost on Node 17+ often resolves to IPv6 (::1). Using 127.0.0.1 is more robust for local dev.
+// 2. DATABASE CONNECTION
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/sanctuary';
-console.log(`[DATABASE] Connecting to storage mesh...`);
+let isDbConnected = false;
 
-mongoose.connect(MONGODB_URI)
-  .then(() => console.log('\x1b[32m%s\x1b[0m', '[DATABASE] Connected Successfully (Atlas)'))
-  .catch((err: Error) => console.error('\x1b[31m%s\x1b[0m', '[DATABASE] Connection Failure:', err.message));
+console.log(`[DATABASE] Attempting connection to: ${MONGODB_URI.split('@').pop()}`);
+
+mongoose.connect(MONGODB_URI, {
+  serverSelectionTimeoutMS: 5000, // Don't hang forever if DB is down
+})
+  .then(() => {
+    isDbConnected = true;
+    console.log('\x1b[32m%s\x1b[0m', '[DATABASE] Connection Established (Atlas/Local)');
+  })
+  .catch((err: Error) => {
+    isDbConnected = false;
+    console.warn('\x1b[33m%s\x1b[0m', `[DATABASE] Offline Mode: ${err.message}`);
+    console.log('\x1b[33m%s\x1b[0m', '[DATABASE] Server will continue in Standalone Mode (API results will be empty).');
+  });
 
 // --- DATA MODELS ---
 const Echo = mongoose.models.Echo || mongoose.model('Echo', new mongoose.Schema({
@@ -58,7 +54,11 @@ const Echo = mongoose.models.Echo || mongoose.model('Echo', new mongoose.Schema(
   title: String,
   content: String,
   timestamp: { type: Number, default: Date.now },
-  stats: { reads: { type: Number, default: 0 }, likes: { type: Number, default: 0 } },
+  stats: { 
+    reads: { type: Number, default: 0 }, 
+    likes: { type: Number, default: 0 },
+    plays: { type: Number, default: 0 }
+  },
   tags: [String]
 }));
 
@@ -73,19 +73,20 @@ const MessageModel = mongoose.models.Message || mongoose.model('Message', new mo
   isRead: { type: Boolean, default: false }
 }));
 
-// --- REST API ENDPOINTS ---
+// --- REST API ENDPOINTS (RESILIENT) ---
 app.get('/api/echoes', async (req: any, res: any) => {
   try {
+    if (!isDbConnected) return res.json([]); // Return empty list if DB is down instead of 500
     const echoes = await Echo.find().sort({ timestamp: -1 }).limit(50);
     res.json(echoes);
   } catch (err) {
-    res.status(500).json({ error: 'Sync failed' });
+    res.json([]);
   }
 });
 
 app.post('/api/echoes', async (req: any, res: any) => {
   try {
-    // FIX: Cast filter object to any to bypass Mongoose Query property check conflicts in findOneAndUpdate
+    if (!isDbConnected) return res.status(503).json({ error: 'DB Offline' });
     const echo = await Echo.findOneAndUpdate({ id: req.body.id } as any, req.body, { upsert: true, new: true });
     res.status(201).json(echo);
   } catch (err) {
@@ -95,14 +96,22 @@ app.post('/api/echoes', async (req: any, res: any) => {
 
 app.get('/api/messages/:userId', async (req: any, res: any) => {
   try {
-    // FIX: Cast complex $or filter object to any to satisfy Mongoose's find() overload resolution
+    if (!isDbConnected) return res.json([]);
     const messages = await MessageModel.find({
       $or: [{ senderId: req.params.userId }, { receiverId: req.params.userId }]
     } as any).sort({ timestamp: 1 });
     res.json(messages);
   } catch (err) {
-    res.status(500).json({ error: 'Whisper mesh offline' });
+    res.json([]);
   }
+});
+
+app.get('/health', (req: any, res: any) => {
+  res.status(200).json({
+    status: 'ok',
+    database: isDbConnected ? 'connected' : 'offline',
+    api_key: !!process.env.API_KEY
+  });
 });
 
 // --- REAL-TIME MESH (SOCKET.IO) ---
@@ -113,16 +122,12 @@ const io = new Server(httpServer, {
 const activeRooms = new Map<string, Map<string, any>>();
 
 io.on('connection', (socket: Socket) => {
-  console.log(`[MESH] Node established: ${socket.id}`);
-
   socket.on('join_circle', ({ roomId, userId, name }: { roomId: string, userId: string, name: string }) => {
     socket.join(roomId);
     if (!activeRooms.has(roomId)) activeRooms.set(roomId, new Map());
     const room = activeRooms.get(roomId)!;
     room.set(socket.id, { socketId: socket.id, userId, name, isSpeaking: false });
-    
     io.to(roomId).emit('presence_update', Array.from(room.values()));
-    console.log(`[CIRCLE] ${name} joined sanctuary ${roomId}`);
   });
 
   socket.on('voice_activity', ({ roomId, isSpeaking }: { roomId: string, isSpeaking: boolean }) => {
@@ -134,14 +139,13 @@ io.on('connection', (socket: Socket) => {
   });
 
   socket.on('send_whisper', async (msgData: any) => {
-    try {
-      const msg = new MessageModel(msgData);
-      await msg.save();
-      io.emit(`whisper_inbox_${msgData.receiverId}`, msgData);
-      console.log(`[WHISPER] Encrypted transmission: ${socket.id} -> ${msgData.receiverId}`);
-    } catch (err) {
-      console.error('[WHISPER] Encryption/Save error');
+    if (isDbConnected) {
+      try {
+        const msg = new MessageModel(msgData);
+        await msg.save();
+      } catch (err) {}
     }
+    io.emit(`whisper_inbox_${msgData.receiverId}`, msgData);
   });
 
   socket.on('disconnect', () => {
@@ -149,62 +153,34 @@ io.on('connection', (socket: Socket) => {
       if (members.has(socket.id)) {
         members.delete(socket.id);
         io.to(roomId).emit('presence_update', Array.from(members.values()));
-        if (members.size === 0) activeRooms.delete(roomId);
       }
     });
-    console.log(`[MESH] Node severed: ${socket.id}`);
   });
 });
 
-// 4. UNIFIED SERVING & ENV INJECTION
+// 4. STATIC ASSETS & FALLBACK
 const __dirname = path.resolve();
 const distPath = path.join(__dirname, 'dist');
 
 if (fs.existsSync(distPath)) {
-  console.log('\x1b[32m%s\x1b[0m', `[SYSTEM] Production Mode: Serving assets from ${distPath}`);
   app.use('/assets', express.static(path.join(distPath, 'assets')) as any);
   app.use(express.static(distPath, { index: false }) as any);
 }
 
-/**
- * ROBUST CATCH-ALL MIDDLEWARE (SPA FALLBACK)
- * By using a general middleware instead of app.get('*'), we bypass 
- * the path-to-regexp PathErrors often seen in Express 5 environments.
- */
 app.use((req: any, res: any, next: any) => {
-  // Only handle GET requests that aren't API calls and aren't static files
-  if (req.method !== 'GET' || req.path.startsWith('/api') || req.path.includes('.')) {
-    return next();
-  }
+  if (req.method !== 'GET' || req.path.startsWith('/api') || req.path.includes('.')) return next();
 
   const indexPath = path.join(distPath, 'index.html');
   const finalPath = fs.existsSync(indexPath) ? indexPath : path.join(__dirname, 'index.html');
 
   fs.readFile(finalPath, 'utf8', (err, html) => {
-    if (err) {
-      console.error('[ERROR] Failed to read index.html:', err);
-      return res.status(500).send('Sanctuary Loading Error');
-    }
-
-    // Inject runtime variables into the browser
-    const injection = `
-    <script>
-      window.process = { env: { API_KEY: ${JSON.stringify(process.env.API_KEY || '')} } };
-      console.log("[RUNTIME] Sanctuary Environment Synced.");
-    </script>`;
-    
+    if (err) return res.status(500).send('Sanctuary Loading Error');
+    const injection = `<script>window.process = { env: { API_KEY: ${JSON.stringify(process.env.API_KEY || '')} } };</script>`;
     res.send(html.replace('<head>', `<head>${injection}`));
   });
 });
 
 const PORT = process.env.PORT || 4000;
 httpServer.listen(Number(PORT), '0.0.0.0', () => {
-  console.log('\x1b[32m%s\x1b[0m', `
-  ┌──────────────────────────────────────────────────┐
-  │   SANCTUARY ENGINE ONLINE                        │
-  │   PORT: ${PORT}                                   │
-  │   GEMINI: ${process.env.API_KEY ? 'SYNCHRONIZED' : 'PENDING KEY'}                    │
-  │   MODE: ${fs.existsSync(distPath) ? 'UNIFIED PRODUCTION' : 'STANDALONE API'}           │
-  └──────────────────────────────────────────────────┘
-  `);
+  console.log('\x1b[32m%s\x1b[0m', `[SYSTEM] Sanctuary Engine Online on Port ${PORT}`);
 });

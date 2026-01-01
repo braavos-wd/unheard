@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { User, EchoEntry, CircleRoom, FundraisingProposal, Message } from './types';
 import EchoFeed from './components/EchoFeed';
@@ -17,6 +16,7 @@ import { io } from 'socket.io-client';
 const App: React.FC = () => {
   const [showLanding, setShowLanding] = useState(() => !localStorage.getItem('sanctuary_entered'));
   const [activeView, setActiveView] = useState<'echoes' | 'circles' | 'studio' | 'crucible' | 'profile' | 'search' | 'archive' | 'messages'>('echoes');
+  const [syncStatus, setSyncStatus] = useState<'cloud' | 'local' | 'offline'>('offline');
   
   const [user, setUser] = useState<User>(() => db.getUser({
     id: 'u-' + Math.random().toString(36).substr(2, 9),
@@ -38,26 +38,34 @@ const App: React.FC = () => {
       const serverEchoes = await db.getPulses();
       setEchoes(serverEchoes);
       setProposals(db.getProposals());
+      
+      // Check health for sync status
+      try {
+        const socketUrl = window.location.port === '5173' ? 'http://localhost:4000' : '';
+        const res = await fetch(`${socketUrl}/health`);
+        const data = await res.json();
+        if (data.database === 'connected') {
+          setSyncStatus(window.location.hostname === 'localhost' ? 'local' : 'cloud');
+        } else {
+          setSyncStatus('offline');
+        }
+      } catch (e) {
+        setSyncStatus('offline');
+      }
     };
     loadMesh();
 
-    // SOCKET URL LOGIC: 
-    // If we're on port 5173 (Vite), point to 4000 (Express).
-    // Otherwise (Production), point to current origin.
     const socketUrl = window.location.port === '5173' 
       ? `http://${window.location.hostname}:4000` 
       : window.location.origin;
     
-    console.log(`[SOCKET] Connecting to Sanctuary Node at: ${socketUrl}`);
     socketRef.current = io(socketUrl);
     
     socketRef.current.on(`whisper_inbox_${user.id}`, (msg: Message) => {
       db.saveMessage(msg);
-      console.log("[WHISPER] Received in mesh.");
     });
 
     socketRef.current.on('connect', () => console.log('[SOCKET] Connected to Mesh.'));
-    socketRef.current.on('connect_error', (err: any) => console.error('[SOCKET] Connection Refused. Check if server is running on 4000.'));
 
     return () => {
       socketRef.current?.disconnect();
@@ -89,7 +97,10 @@ const App: React.FC = () => {
         <div className="max-w-7xl mx-auto flex justify-between items-center">
           <div className="flex flex-col cursor-pointer group" onClick={() => setActiveView('echoes')}>
             <h1 className="text-lg sm:text-2xl font-black tracking-tighter uppercase font-mono group-hover:text-serene transition-colors leading-none">Echoes & Circles</h1>
-            <span className="text-[8px] sm:text-[10px] text-dim font-mono tracking-[0.2em] sm:tracking-[0.4em] uppercase opacity-50 mt-1">Sovereign Sanctuary</span>
+            <div className="flex items-center gap-2 mt-1">
+               <div className={`w-1.5 h-1.5 rounded-full ${syncStatus === 'cloud' ? 'bg-green-500' : syncStatus === 'local' ? 'bg-serene animate-pulse' : 'bg-dim'}`}></div>
+               <span className="text-[8px] sm:text-[9px] text-dim font-mono tracking-widest uppercase opacity-50">{syncStatus} Mesh Active</span>
+            </div>
           </div>
           
           <div className="flex items-center gap-3 sm:gap-10">

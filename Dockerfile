@@ -1,45 +1,50 @@
-# AURA & ECHO - UNIFIED PRODUCTION DOCKERFILE
-# This configuration builds the frontend and runs the backend server
-# which serves both the API and the static frontend assets.
+# AURA & ECHO - OPTIMIZED PRODUCTION DOCKERFILE
 
-# --- STAGE 1: Build Frontend ---
+# --- STAGE 1: Build Stage ---
 FROM node:20-slim AS build
 WORKDIR /app
 
-# Copy dependency manifests
-COPY package.json ./
+# Install all dependencies including devDependencies for compilation
+COPY package.json package-lock.json* ./
 RUN npm install
 
-# Copy source code
+# Copy source and config
+COPY tsconfig.json vite.config.ts index.html ./
 COPY . .
 
-# Build the production assets into the /dist folder
+# 1. Build Frontend Assets (Vite)
 RUN npm run build
 
-# --- STAGE 2: Production Runtime ---
+# 2. Build Backend (Compile TS to JS for production stability)
+# Using tsx to build or simple tsc if configured
+RUN npx tsc server.ts --esModuleInterop --outDir dist-server --module esnext --target esnext --moduleResolution bundler --allowImportingTsExtensions
+
+# --- STAGE 2: Production Stage ---
 FROM node:20-slim
 WORKDIR /app
 
-# Install production-only backend dependencies
+# Install production dependencies only
 COPY package.json ./
-RUN npm install --omit=dev && npm install tsx
+RUN npm install --omit=dev
 
-# Copy the built frontend from the previous stage
+# Copy built frontend
 COPY --from=build /app/dist ./dist
 
-# Copy the server source and type definitions
-COPY --from=build /app/server.ts ./
-COPY --from=build /app/types.ts ./
+# Copy compiled server (Now standard JavaScript)
+COPY --from=build /app/dist-server/server.js ./server.js
 
-# Environment configuration
-# Sliplane and other providers will use this port
+# Copy types for any runtime needs (if applicable)
+COPY types.ts ./
+
+# Environment setup
 ENV PORT=4000
+ENV NODE_ENV=production
 EXPOSE 4000
 
-# START COMMAND:
-# In production, we run ONLY the server.
-# The server.ts is the unified entry point:
-# 1. It starts the Express API and Socket.io engine.
-# 2. It serves the static React files from the /dist folder.
-# 'tsx' is used to run the TypeScript server file directly.
-CMD ["npx", "tsx", "server.ts"]
+# Run with standard Node.js (Stable, handles SIGTERM/SIGINT correctly)
+CMD ["node", "server.js"]
+
+# DEPLOYMENT NOTES:
+# - This 2-stage build ensures the smallest possible container.
+# - Running the compiled .js file is much faster and more reliable than tsx in production.
+# - Ensure MONGODB_URI and API_KEY are configured in your Sliplane dashboard.

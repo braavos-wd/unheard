@@ -167,8 +167,10 @@ io.on('connection', (socket: Socket) => {
   });
 });
 
-// FIX: Using any for req/res to resolve missing sendFile property on Response type
-app.get('*', (req: any, res: any) => {
+// FIX: Express 5.x uses path-to-regexp v8+. 
+// The unnamed wildcard '*' is no longer supported. 
+// Use '/:path*' to match everything after the root for the SPA fallback.
+app.get('/:path*', (req: any, res: any) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 

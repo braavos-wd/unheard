@@ -19,11 +19,15 @@ RUN npm run build
 RUN echo "=== Building backend ===" && \
     # Install production dependencies only for backend
     npm install --omit=dev && \
+    # Install type definitions needed for build
+    npm install --save-dev @types/express @types/node @types/cors @types/ws && \
     # Create necessary directories
     mkdir -p /app/dist-server && \
     # Build the server
     echo "=== Compiling TypeScript (backend) ===" && \
     npx tsc -p tsconfig.server.json && \
+    # Clean up dev dependencies after build
+    npm uninstall --save-dev @types/express @types/node @types/cors @types/ws && \
     # Verify output files
     echo -e "\n=== Compiled files in /app/dist-server ===" && \
     ls -la /app/dist-server/ && \

@@ -169,10 +169,10 @@ if (fs.existsSync(distPath)) {
 
 /**
  * SPA FALLBACK MIDDLEWARE
- * Using app.use() instead of app.get('*') to bypass Express 5 route string parsing issues.
+ * Using terminal middleware instead of a route pattern to avoid Express 5 path parsing issues.
  */
 app.use((req: any, res: any, next: any) => {
-  // Only handle GET requests that aren't API calls or static files
+  // Only handle GET requests that aren't API calls or static files (no dot in path)
   if (req.method === 'GET' && !req.path.startsWith('/api') && !req.path.includes('.')) {
     const indexPath = path.join(distPath, 'index.html');
     const fallbackPath = path.join(__dirname, 'index.html');
@@ -180,17 +180,18 @@ app.use((req: any, res: any, next: any) => {
 
     if (fs.existsSync(finalPath)) {
       fs.readFile(finalPath, 'utf8', (err, html) => {
-        if (err) return res.status(500).send('Sanctuary Loading Error');
+        if (err) {
+          res.status(500).send('Sanctuary Loading Error');
+          return;
+        }
         // Inject API Key into window object for the frontend
         const injection = `<script>window.process = { env: { API_KEY: ${JSON.stringify(process.env.API_KEY || '')} } };</script>`;
         res.send(html.replace('<head>', `<head>${injection}`));
       });
-    } else {
-      res.status(404).send('Sanctuary Entry Not Found');
+      return;
     }
-  } else {
-    next();
   }
+  next();
 });
 
 const PORT = process.env.PORT || 4000;

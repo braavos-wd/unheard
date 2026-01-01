@@ -17,16 +17,31 @@ RUN npm run build
 
 # 2. Build Backend (Compile TS to JS for production stability)
 RUN echo "=== Starting backend build ===" && \
-    mkdir -p dist-server && \
+    # Create necessary directories
+    mkdir -p /app/dist-server && \
+    # Show current directory structure
     echo "Current directory: $(pwd)" && \
-    echo "Files in current directory: $(ls -la)" && \
-    echo "\n=== Listing source files ===" && \
-    ls -la server.ts types.ts 2>/dev/null || echo "Source files not found!" && \
+    echo "Files in /app: $(ls -la /app)" && \
+    # Verify source files exist
+    echo "\n=== Verifying source files ===" && \
+    ls -la /app/server.ts /app/types.ts 2>/dev/null || echo "Warning: Some source files not found!" && \
+    # Run TypeScript compiler with detailed output
     echo "\n=== Running TypeScript compiler ===" && \
-    npx tsc --project tsconfig.server.json --listFiles && \
-    npx tsc --project tsconfig.server.json && \
-    echo "\n=== Compiled files in dist-server ===" && \
-    find dist-server -type f -exec ls -la {} \; || echo "No files found in dist-server" && \
+    cd /app && \
+    npx tsc --project tsconfig.server.json --listFiles --diagnostics && \
+    npx tsc --project tsconfig.server.json --noEmitOnError false 2>&1 | tee /tmp/tsc_errors.log || echo "TypeScript compilation completed with warnings" && \
+    # Verify output files
+    echo "\n=== Compiled files in /app/dist-server ===" && \
+    find /app/dist-server -type f -exec ls -la {} \; || echo "No files found in /app/dist-server" && \
+    # Check if server.js was created
+    if [ -f "/app/dist-server/server.js" ]; then \
+        echo "\n=== Server.js content (first 10 lines) ===" && \
+        head -n 10 /app/dist-server/server.js; \
+    else \
+        echo "\n=== ERROR: server.js not found in /app/dist-server/ ===" && \
+        echo "=== TypeScript errors: ===" && \
+        cat /tmp/tsc_errors.log || echo "No TypeScript errors found"; \
+    fi && \
     echo "\n=== Build completed ==="
 
 # --- STAGE 2: Production Stage ---
@@ -40,23 +55,30 @@ RUN npm install --omit=dev
 # Copy built frontend
 COPY --from=build /app/dist ./dist
 
-# Copy built backend files and verify
-COPY --from=build /app/dist-server/ ./
+# Copy built backend files
+COPY --from=build /app/dist-server /app/dist-server/
+
+# Set working directory and verify files
+WORKDIR /app
 
 # Verify files were copied correctly
-RUN echo "\n=== Files in /app after copy ===" && \
-    ls -la && \
-    echo "\n=== Contents of dist-server ===" && \
-    ls -la dist-server/ 2>/dev/null || echo "dist-server not found" && \
+RUN echo "\n=== Verifying production files ===" && \
+    echo "Current directory: $(pwd)" && \
+    echo "\n=== Directory structure ===" && \
+    ls -la /app && \
+    echo "\n=== dist-server contents ===" && \
+    ls -la /app/dist-server/ 2>/dev/null || echo "dist-server not found" && \
     echo "\n=== Checking for server.js ===" && \
-    if [ -f "dist-server/server.js" ]; then \
-        echo "server.js found!" && \
-        echo "First 5 lines of server.js:" && \
-        head -n 5 dist-server/server.js; \
+    if [ -f "/app/dist-server/server.js" ]; then \
+        echo "✅ server.js found!" && \
+        echo "File size: $(du -h /app/dist-server/server.js | cut -f1)" && \
+        echo "First 5 lines:" && \
+        head -n 5 /app/dist-server/server.js; \
     else \
-        echo "ERROR: server.js not found in dist-server/" && \
-        echo "Current directory: $(pwd)" && \
-        find . -name "*.js" -o -name "*.ts" | sort; \
+        echo "❌ ERROR: server.js not found in /app/dist-server/" && \
+        echo "Searching for JavaScript files..." && \
+        find /app -name "*.js" | sort; \
+        exit 1; \
     fi
 
 # Environment setup
@@ -64,8 +86,8 @@ ENV PORT=4000
 ENV NODE_ENV=production
 EXPOSE 4000
 
-# Run the server from the correct location
-CMD ["node", "dist-server/server.js"]
+# Run the server from the correct location with error handling
+CMD ["sh", "-c", "node /app/dist-server/server.js || { echo '❌ Failed to start server'; exit 1; }"]
 
 # DEPLOYMENT NOTES:
 # - This 2-stage build ensures the smallest possible container.

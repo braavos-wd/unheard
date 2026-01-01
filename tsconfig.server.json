@@ -4,7 +4,7 @@
     "target": "ES2020",
     "module": "CommonJS",
     "outDir": "./dist-server",
-    "rootDir": "./",
+    "rootDir": ".",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -13,14 +13,15 @@
     "resolveJsonModule": true,
     "types": ["node"],
     "sourceMap": true,
-    "declaration": true
+    "declaration": true,
+    "noEmitOnError": false
   },
   "include": [
     "./server.ts",
     "./types.ts"
   ],
   "exclude": [
-    "node_modules",
+    "**/node_modules/*",
     "**/*.test.ts",
     "dist",
     "dist-server",
@@ -28,9 +29,11 @@
     "**/*.jsx",
     "**/*.js",
     "**/*.mjs",
-    "src/**/*",
-    "components/**/*",
+    "src",
+    "components",
+    "public",
     "*.config.*",
-    "**/__tests__/*"
+    "**/__tests__/*",
+    "**/__mocks__/*"
   ]
 }

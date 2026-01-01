@@ -10,11 +10,10 @@ WORKDIR /app
 COPY package.json ./
 RUN npm install
 
-# Copy source code (including index.css, index.html, index.tsx, etc.)
+# Copy source code
 COPY . .
 
 # Build the production assets into the /dist folder
-# This includes transpiling TSX, processing CSS via Tailwind/Vite
 RUN npm run build
 
 # --- STAGE 2: Production Runtime ---
@@ -26,7 +25,6 @@ COPY package.json ./
 RUN npm install --omit=dev && npm install tsx
 
 # Copy the built frontend from the previous stage
-# The server.ts logic looks for this 'dist' folder to serve static files
 COPY --from=build /app/dist ./dist
 
 # Copy the server source and type definitions

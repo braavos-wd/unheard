@@ -2,7 +2,6 @@
 /**
  * AURA & ECHO - PRODUCTION SERVER
  * Coordinates real-time resonance, presence, and encrypted whisper handshakes.
- * Uses MongoDB for persistent sanctuary logs and user meshes.
  */
 
 import express from 'express';
@@ -15,48 +14,63 @@ import fs from 'fs';
 const app = express();
 const httpServer = createServer(app);
 
-// 1. VITALITY CHECK (HEALTHCHECK) - TOP PRIORITY
+// 1. STARTUP LOGGING
+console.log('\x1b[36m%s\x1b[0m', '--- SANCTUARY ENGINE STARTING ---');
+
+app.use((req: any, res: any, next: any) => {
+  if (req.path !== '/health') {
+    console.log(`[HTTP] ${req.method} ${req.path} - ${new Date().toLocaleTimeString()}`);
+  }
+  next();
+});
+
+// 2. HEALTH CHECK
 app.get('/health', (req: any, res: any) => {
   const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
   res.status(200).json({
     status: 'ok',
     uptime: process.uptime(),
     database: dbStatus,
-    timestamp: Date.now()
+    api_key_detected: !!process.env.API_KEY,
+    node_env: process.env.NODE_ENV || 'development'
   });
 });
 
-// 2. MIDDLEWARE CONFIG
+// 3. MIDDLEWARE & STATIC ASSETS
 app.use(express.json() as any);
 
 const __dirname = path.resolve();
 const distPath = path.join(__dirname, 'dist');
-app.use(express.static(distPath) as any);
 
-// 3. DATABASE CONFIGURATION
+if (fs.existsSync(distPath)) {
+  console.log(`[SYSTEM] Production assets detected at ${distPath}`);
+  app.use('/assets', express.static(path.join(distPath, 'assets')) as any);
+  app.use(express.static(distPath, { index: false }) as any);
+} else {
+  console.log('[SYSTEM] Development mode: Serving from root (Vite expected on 5173)');
+}
+
+// 4. DATABASE CONNECTION
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/sanctuary';
+console.log(`[DATABASE] Connecting to storage...`);
 
 mongoose.connect(MONGODB_URI)
-  .then(() => console.log('[DATABASE] Connected to Mesh Storage (MongoDB Atlas)'))
-  .catch((err: Error) => console.error('[DATABASE] Connection error:', err));
+  .then(() => console.log('\x1b[32m%s\x1b[0m', '[DATABASE] Connection Successful (MongoDB Atlas)'))
+  .catch((err: Error) => console.error('\x1b[31m%s\x1b[0m', '[DATABASE] Connection Error:', err.message));
 
 // --- MODELS ---
-const EchoSchema = new mongoose.Schema({
+const Echo = mongoose.model('Echo', new mongoose.Schema({
   id: { type: String, unique: true },
   authorId: String,
   authorName: String,
   title: String,
   content: String,
   timestamp: { type: Number, default: Date.now },
-  stats: {
-    reads: { type: Number, default: 0 },
-    likes: { type: Number, default: 0 }
-  },
+  stats: { reads: { type: Number, default: 0 }, likes: { type: Number, default: 0 } },
   tags: [String]
-});
-const Echo = mongoose.model('Echo', EchoSchema);
+}));
 
-const MessageSchema = new mongoose.Schema({
+const MessageModel = mongoose.model('Message', new mongoose.Schema({
   id: { type: String, unique: true },
   senderId: String,
   receiverId: String,
@@ -65,8 +79,7 @@ const MessageSchema = new mongoose.Schema({
   type: { type: String, default: 'text' },
   sharedCircleId: String,
   isRead: { type: Boolean, default: false }
-});
-const MessageModel = mongoose.model('Message', MessageSchema);
+}));
 
 // --- REST API ---
 app.get('/api/echoes', async (req: any, res: any) => {
@@ -80,12 +93,7 @@ app.get('/api/echoes', async (req: any, res: any) => {
 
 app.post('/api/echoes', async (req: any, res: any) => {
   try {
-    const echoData = req.body;
-    const echo = await Echo.findOneAndUpdate(
-      { id: echoData.id },
-      echoData,
-      { upsert: true, new: true }
-    );
+    const echo = await Echo.findOneAndUpdate({ id: req.body.id }, req.body, { upsert: true, new: true });
     res.status(201).json(echo);
   } catch (err) {
     res.status(400).json({ error: 'Failed to save echo' });
@@ -99,45 +107,34 @@ app.get('/api/messages/:userId', async (req: any, res: any) => {
     }).sort({ timestamp: 1 });
     res.json(messages);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch whispers' });
+    res.status(500).json({ error: 'Failed to fetch messages' });
   }
 });
 
-// --- REAL-TIME COORDINATION (Socket.io) ---
+// --- SOCKET.IO COORDINATION ---
 const io = new Server(httpServer, {
   cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
-interface Member {
-  socketId: string;
-  userId: string;
-  name: string;
-  isSpeaking?: boolean;
-}
-
-const activeRooms = new Map<string, Map<string, Member>>();
+const activeRooms = new Map<string, Map<string, any>>();
 
 io.on('connection', (socket: Socket) => {
-  console.log('[SOCKET] User Connected:', socket.id);
+  console.log(`[SOCKET] Node connected: ${socket.id}`);
 
   socket.on('join_circle', ({ roomId, userId, name }: { roomId: string, userId: string, name: string }) => {
     socket.join(roomId);
-    if (!activeRooms.has(roomId)) {
-      activeRooms.set(roomId, new Map());
-    }
-    const roomMembers = activeRooms.get(roomId)!;
-    roomMembers.set(socket.id, { socketId: socket.id, userId, name, isSpeaking: false });
+    if (!activeRooms.has(roomId)) activeRooms.set(roomId, new Map());
+    const room = activeRooms.get(roomId)!;
+    room.set(socket.id, { socketId: socket.id, userId, name, isSpeaking: false });
     
-    // Broadcast updated presence to all members in that room
-    io.to(roomId).emit('presence_update', Array.from(roomMembers.values()));
+    io.to(roomId).emit('presence_update', Array.from(room.values()));
+    console.log(`[CIRCLE] ${name} joined ${roomId} (${room.size} active)`);
   });
 
   socket.on('voice_activity', ({ roomId, isSpeaking }: { roomId: string, isSpeaking: boolean }) => {
-    const roomMembers = activeRooms.get(roomId);
-    if (roomMembers && roomMembers.has(socket.id)) {
-      const member = roomMembers.get(socket.id)!;
-      member.isSpeaking = isSpeaking;
-      // Broadcast specifically who is speaking
+    const room = activeRooms.get(roomId);
+    if (room?.has(socket.id)) {
+      room.get(socket.id)!.isSpeaking = isSpeaking;
       io.to(roomId).emit('user_speaking', { socketId: socket.id, isSpeaking });
     }
   });
@@ -146,57 +143,53 @@ io.on('connection', (socket: Socket) => {
     try {
       const msg = new MessageModel(msgData);
       await msg.save();
-      // Targeted emit to the specific recipient's listener
       io.emit(`whisper_inbox_${msgData.receiverId}`, msgData);
+      console.log(`[WHISPER] Encrypted transmission from ${msgData.senderId} to ${msgData.receiverId}`);
     } catch (err) {
-      console.error('[WHISPER] Broadcast persistence failed');
+      console.error('[WHISPER] Save failed');
     }
   });
 
   socket.on('disconnect', () => {
-    activeRooms.forEach((roomMembers, roomId) => {
-      if (roomMembers.has(socket.id)) {
-        roomMembers.delete(socket.id);
-        io.to(roomId).emit('presence_update', Array.from(roomMembers.values()));
-        if (roomMembers.size === 0) activeRooms.delete(roomId);
+    activeRooms.forEach((members, roomId) => {
+      if (members.has(socket.id)) {
+        members.delete(socket.id);
+        io.to(roomId).emit('presence_update', Array.from(members.values()));
+        if (members.size === 0) activeRooms.delete(roomId);
       }
     });
+    console.log(`[SOCKET] Node disconnected: ${socket.id}`);
   });
 });
 
-// 4. SPA FALLBACK & API_KEY INJECTION
-// This middleware catches all non-API GET requests and serves index.html with runtime keys.
-app.use((req: any, res: any, next: any) => {
-  if (req.method === 'GET' && !req.path.startsWith('/api')) {
-    const indexPath = path.join(distPath, 'index.html');
-    const finalPath = fs.existsSync(indexPath) ? indexPath : path.join(__dirname, 'index.html');
+// 5. RUNTIME ENV INJECTION
+app.get('*', (req: any, res: any, next: any) => {
+  if (req.path.startsWith('/api') || req.path.includes('.')) return next();
 
-    fs.readFile(finalPath, 'utf8', (err, html) => {
-      if (err) return res.status(500).send('Sanctuary Initialization Error');
+  const indexPath = path.join(distPath, 'index.html');
+  const finalPath = fs.existsSync(indexPath) ? indexPath : path.join(__dirname, 'index.html');
 
-      // Inject the key into the client's window.process object
-      const injectedScript = `<script>
-        window.process = { env: { 
-          API_KEY: ${JSON.stringify(process.env.API_KEY || '')} 
-        } };
-      </script>`;
-      
-      const finalHtml = html.replace('<head>', `<head>${injectedScript}`);
-      res.send(finalHtml);
-    });
-  } else {
-    next();
-  }
+  fs.readFile(finalPath, 'utf8', (err, html) => {
+    if (err) return res.status(500).send('Sanctuary Initialization Error');
+
+    const injection = `
+    <script>
+      window.process = { env: { API_KEY: ${JSON.stringify(process.env.API_KEY || '')} } };
+      console.log("[RUNTIME] Environment Synchronized.");
+    </script>`;
+    
+    res.send(html.replace('<head>', `<head>${injection}`));
+  });
 });
 
 const PORT = process.env.PORT || 4000;
 httpServer.listen(Number(PORT), '0.0.0.0', () => {
-  console.log(`
+  console.log('\x1b[32m%s\x1b[0m', `
   ┌──────────────────────────────────────────────────┐
-  │   SANCTUARY PRODUCTION ENGINE ACTIVE             │
+  │   SANCTUARY PRODUCTION ENGINE: ONLINE            │
   │   PORT: ${PORT}                                   │
-  │   MAPPING: FULL PRESENCE & WHISPER PERSISTENCE   │
-  │   RUNTIME KEY INJECTION: ENABLED                 │
+  │   BIND: 0.0.0.0                                  │
+  │   KEY: ${process.env.API_KEY ? 'DETACHED_MODE (SAFE)' : 'MISSING'}                   │
   └──────────────────────────────────────────────────┘
   `);
 });

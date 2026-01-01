@@ -30,11 +30,23 @@ async function decodeAudioData(
   return buffer;
 }
 
+/**
+ * GEMINI SERVICE BRIDGE
+ * Resolves API_KEY from runtime-injected process.env
+ */
+const getAiClient = () => {
+  // Try injected key first (Production), fallback to process.env (Vite build-time)
+  const apiKey = (window as any).process?.env?.API_KEY || (process as any).env?.API_KEY || "";
+  if (!apiKey) {
+    console.error("[CRITICAL] Gemini API Key is missing from runtime environment.");
+  }
+  return new GoogleGenAI({ apiKey });
+};
+
 export const geminiService = {
   // Transcribe audio and format into a structured reflection
   async transcribeAndFormat(audioBase64: string): Promise<{ title: string; content: string }> {
-    const apiKey = (window as any).process?.env?.API_KEY || "";
-    const ai = new GoogleGenAI({ apiKey });
+    const ai = getAiClient();
     
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
@@ -69,8 +81,7 @@ export const geminiService = {
 
   // Play text as speech
   async playSpeech(text: string, ctx: AudioContext) {
-    const apiKey = (window as any).process?.env?.API_KEY || "";
-    const ai = new GoogleGenAI({ apiKey });
+    const ai = getAiClient();
 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",

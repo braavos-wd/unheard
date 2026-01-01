@@ -17,6 +17,7 @@ import { io } from 'socket.io-client';
 const App: React.FC = () => {
   const [showLanding, setShowLanding] = useState(() => !localStorage.getItem('sanctuary_entered'));
   const [activeView, setActiveView] = useState<'echoes' | 'circles' | 'studio' | 'crucible' | 'profile' | 'search' | 'archive' | 'messages'>('echoes');
+  
   const [user, setUser] = useState<User>(() => db.getUser({
     id: 'u-' + Math.random().toString(36).substr(2, 9),
     name: 'Seeker_' + Math.floor(Math.random() * 1000),
@@ -40,18 +41,23 @@ const App: React.FC = () => {
     };
     loadMesh();
 
-    // GLOBAL WHISPER LISTENER
-    const socketUrl = window.location.hostname === 'localhost' ? 'http://localhost:4000' : '/';
+    // SOCKET URL LOGIC: 
+    // If we're on port 5173 (Vite), point to 4000 (Express).
+    // Otherwise (Production), point to current origin.
+    const socketUrl = window.location.port === '5173' 
+      ? `http://${window.location.hostname}:4000` 
+      : window.location.origin;
+    
+    console.log(`[SOCKET] Connecting to Sanctuary Node at: ${socketUrl}`);
     socketRef.current = io(socketUrl);
     
     socketRef.current.on(`whisper_inbox_${user.id}`, (msg: Message) => {
-      // Save incoming message to local storage immediately
       db.saveMessage(msg);
-      // Optional: Visual notification or aura boost
-      if (activeView !== 'messages') {
-        console.log("New whisper received in mesh.");
-      }
+      console.log("[WHISPER] Received in mesh.");
     });
+
+    socketRef.current.on('connect', () => console.log('[SOCKET] Connected to Mesh.'));
+    socketRef.current.on('connect_error', (err: any) => console.error('[SOCKET] Connection Refused. Check if server is running on 4000.'));
 
     return () => {
       socketRef.current?.disconnect();

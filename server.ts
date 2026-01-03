@@ -22,16 +22,26 @@ interface User {
 interface Message extends Document {
   senderId: string;
   receiverId: string;
-  content: string;
+  cipherText: string;
   timestamp: number;
+  type: string;
+  sharedCircleId?: string;
   isRead: boolean;
 }
 
 interface Echo extends Document {
   id: string;
+  authorId: string;
+  authorName: string;
+  title: string;
   content: string;
-  userId: string;
   timestamp: number;
+  stats: {
+    reads: number;
+    likes: number;
+    plays: number;
+  };
+  tags: string[];
 }
 
 // Initialize Express app
@@ -56,12 +66,12 @@ let isDbConnected = false;
 const activeRooms = new Map<string, Map<string, User>>();
 
 // Middleware
+// @ts-ignore
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'dist')));
 
 // Request logging
-app.use((req: Request, _res: Response, next: NextFunction) => {
+app.use((req: any, _res: any, next: NextFunction) => {
   if (req.path !== '/health') {
     console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
   }
@@ -103,7 +113,7 @@ function getCollection<T extends Document>(name: string): Collection<T> {
 }
 
 // Health check endpoint
-app.get('/health', (_req: Request, res: Response) => {
+app.get('/health', (_req: any, res: any) => {
   res.json({
     status: 'ok',
     database: isDbConnected ? 'connected' : 'disconnected',
@@ -113,7 +123,7 @@ app.get('/health', (_req: Request, res: Response) => {
 });
 
 // API Endpoints
-app.get('/api/echoes', async (_req: Request, res: Response) => {
+app.get('/api/echoes', async (_req: any, res: any) => {
   try {
     const echoes = isDbConnected 
       ? await getCollection<Echo>('echoes')
@@ -129,7 +139,7 @@ app.get('/api/echoes', async (_req: Request, res: Response) => {
   }
 });
 
-app.post('/api/echoes', async (req: Request, res: Response): Promise<void> => {
+app.post('/api/echoes', async (req: any, res: any): Promise<void> => {
   try {
     if (!isDbConnected) {
       res.status(503).json({ error: 'Database unavailable' });
@@ -138,9 +148,13 @@ app.post('/api/echoes', async (req: Request, res: Response): Promise<void> => {
 
     const echo: Echo = {
       id: req.body.id || Date.now().toString(),
+      authorId: req.body.authorId || '',
+      authorName: req.body.authorName || '',
+      title: req.body.title || '',
       content: req.body.content || '',
-      userId: req.body.userId || '',
-      timestamp: Date.now()
+      timestamp: req.body.timestamp || Date.now(),
+      stats: req.body.stats || { reads: 0, likes: 0, plays: 0 },
+      tags: req.body.tags || []
     };
 
     await getCollection<Echo>('echoes').updateOne(
@@ -156,7 +170,7 @@ app.post('/api/echoes', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
-app.get('/api/messages/:userId', async (req: Request, res: Response): Promise<void> => {
+app.get('/api/messages/:userId', async (req: any, res: any): Promise<void> => {
   try {
     if (!isDbConnected) {
       res.json([]);
@@ -180,37 +194,6 @@ app.get('/api/messages/:userId', async (req: Request, res: Response): Promise<vo
   }
 });
 
-// Graceful shutdown
-const shutdown = async () => {
-  console.log('🛑 Shutting down server...');
-  
-  // Close WebSocket connections
-  io.close(() => {
-    console.log('WebSocket server closed');
-  });
-
-  // Close database connection
-  if (isDbConnected && dbClient) {
-    await dbClient.close();
-    console.log('Database connection closed');
-  }
-
-  // Close HTTP server
-  httpServer.close(() => {
-    console.log('HTTP server closed');
-    process.exit(0);
-  });
-
-  // Force exit after timeout
-  setTimeout(() => {
-    console.error('Could not close connections in time, forcefully shutting down');
-    process.exit(1);
-  }, 10000);
-};
-
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
-
 // WebSocket connection handling
 io.on('connection', (socket: Socket) => {
   console.log(`Client connected: ${socket.id}`);
@@ -233,12 +216,14 @@ io.on('connection', (socket: Socket) => {
     }
   });
 
-  socket.on('send_whisper', async (msgData: Omit<Message, 'timestamp' | 'isRead'>) => {
+  socket.on('send_whisper', async (msgData: any) => {
     const message: Message = {
       senderId: msgData.senderId || '',
       receiverId: msgData.receiverId || '',
-      content: msgData.content || '',
+      cipherText: msgData.cipherText || '',
       timestamp: Date.now(),
+      type: msgData.type || 'text',
+      sharedCircleId: msgData.sharedCircleId,
       isRead: false
     };
 
@@ -267,31 +252,70 @@ io.on('connection', (socket: Socket) => {
   });
 });
 
-// Serve static files from the dist directory
+// 4. STATIC ASSETS & SPA FALLBACK
 const distPath = path.join(__dirname, 'dist');
 
+// Serve static assets
 if (fs.existsSync(distPath)) {
   app.use(express.static(distPath));
-  
-  // Handle SPA routing - serve index.html for all other routes
-  app.get('*', (_req: Request, res: Response) => {
-    res.sendFile(path.join(distPath, 'index.html'));
-  });
 }
 
-// Error handling middleware
-app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-  console.error('Unhandled error:', err);
-  res.status(500).json({ error: 'Internal server error' });
+/**
+ * SPA FALLBACK CATCH-ALL
+ * FIX: In Express 5, the raw '*' wildcard throws "Missing parameter name".
+ * We use '/:path*' which is the named equivalent for catch-all routing.
+ */
+app.get('/:path*', (req: any, res: any) => {
+  // Ignore API requests in the catch-all
+  if (req.path.startsWith('/api')) {
+    return res.status(404).json({ error: 'API route not found' });
+  }
+
+  const indexPath = path.join(distPath, 'index.html');
+  const rootIndexPath = path.join(__dirname, 'index.html');
+  const finalPath = fs.existsSync(indexPath) ? indexPath : rootIndexPath;
+
+  if (fs.existsSync(finalPath)) {
+    // Read and inject the API_KEY so it's available in the browser via process.env.API_KEY
+    fs.readFile(finalPath, 'utf8', (err, html) => {
+      if (err) {
+        return res.status(500).send('Sanctuary Loading Error');
+      }
+      const injection = `<script>window.process = { env: { API_KEY: ${JSON.stringify(process.env.API_KEY || '')} } };</script>`;
+      res.send(html.replace('<head>', `<head>${injection}`));
+    });
+  } else {
+    res.status(404).send('Sanctuary Offline - Index not found');
+  }
 });
+
+// Error handling middleware
+app.use((err: any, _req: any, res: any, _next: NextFunction) => {
+  console.error('Unhandled server error:', err);
+  res.status(500).json({ error: 'Internal sanctuary engine error' });
+});
+
+// Graceful shutdown
+const shutdown = async () => {
+  console.log('🛑 Shutting down server...');
+  io.close();
+  if (isDbConnected && dbClient) {
+    await dbClient.close();
+  }
+  httpServer.close(() => {
+    process.exit(0);
+  });
+};
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 
 // Start the server
 async function startServer() {
   await connectToDatabase();
   
   httpServer.listen(SERVER_PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server running on port ${SERVER_PORT}`);
-    console.log(`🌐 Environment: ${NODE_ENV}`);
+    console.log(`🚀 Sanctuary Server running on port ${SERVER_PORT}`);
     console.log(`💾 Database: ${isDbConnected ? 'Connected' : 'Disconnected'}`);
   });
 }
@@ -306,7 +330,7 @@ process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error);
   process.exit(1);
 });
-// Start the server
+
 startServer().catch((error) => {
   console.error('Failed to start server:', error);
   process.exit(1);

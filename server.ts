@@ -9,12 +9,19 @@ import cors from 'cors';
 
 /**
  * AURA & ECHO - PRODUCTION ENGINE
- * Refactored for extreme stability in Express 5 environments.
+ * Refactored for extreme stability and observability.
  */
 
-// ES Modules __dirname setup
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// --- EMERGENCY CRASH HANDLERS ---
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught Exception:', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
+});
 
 // --- INTERFACES ---
 interface User {
@@ -61,18 +68,29 @@ const io = new SocketIOServer(httpServer, {
 
 const SERVER_PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 4000;
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/sanctuary';
-const NODE_ENV = process.env.NODE_ENV || 'development';
 
 let dbClient: MongoClient;
 let db: Db;
 let isDbConnected = false;
 const activeRooms = new Map<string, Map<string, User>>();
 
-// --- MIDDLEWARES ---
-app.use(cors() as any);
+// --- 1. CRITICAL: HIGH-PRIORITY HEALTH CHECK ---
+// Define this BEFORE any complex middleware to ensure the load balancer gets a 200 fast.
+app.get('/health', (_req: any, res: any) => {
+  res.status(200).json({
+    status: 'online',
+    database: isDbConnected ? 'connected' : 'disconnected',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
+  });
+});
+
+// --- 2. MIDDLEWARES ---
+// Fix: Use explicit path '/' to satisfy Express type overloads and avoid PathParams mismatch
+app.use('/', cors());
 app.use(express.json());
 
-// Logger - Fixed type errors for req.path and req.method
+// Request Logging
 app.use((req: any, _res: any, next: NextFunction) => {
   if (req.path !== '/health') {
     console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
@@ -80,44 +98,38 @@ app.use((req: any, _res: any, next: NextFunction) => {
   next();
 });
 
-// --- DATABASE ---
+// --- 3. DATABASE CONNECTION ---
 async function connectToDatabase() {
   try {
-    console.log('🔌 Connecting to MongoDB Mesh...');
+    console.log('🔌 Connecting to MongoDB Sanctuary...');
     dbClient = new MongoClient(MONGODB_URI, {
       serverApi: {
         version: ServerApiVersion.v1,
         strict: true,
         deprecationErrors: true,
-      }
+      },
+      connectTimeoutMS: 10000,
+      serverSelectionTimeoutMS: 10000
     });
 
     await dbClient.connect();
     db = dbClient.db();
     isDbConnected = true;
-    console.log('✅ MongoDB Mesh Connected');
+    console.log('✅ MongoDB Sanctuary Connected');
     await db.command({ ping: 1 });
   } catch (error) {
     isDbConnected = false;
-    console.error('❌ MongoDB Mesh Connection Failure:', error);
+    console.error('❌ MongoDB Connection Failure:', error);
     console.warn('⚠️ Sanctuary operating in Local-Only mode.');
   }
 }
 
 function getCollection<T extends Document>(name: string): Collection<T> {
-  if (!isDbConnected) throw new Error('Sanctuary Database Offline');
+  if (!isDbConnected) throw new Error('Database Offline');
   return db.collection<T>(name);
 }
 
-// --- API ROUTES ---
-
-app.get('/health', (_req: any, res: any) => {
-  res.json({
-    status: 'online',
-    database: isDbConnected ? 'connected' : 'disconnected',
-    timestamp: new Date().toISOString()
-  });
-});
+// --- 4. API ROUTES ---
 
 app.get('/api/echoes', async (_req: any, res: any) => {
   try {
@@ -149,7 +161,7 @@ app.post('/api/echoes', async (req: any, res: any): Promise<void> => {
     await getCollection<Echo>('echoes').updateOne({ id: echo.id }, { $set: echo }, { upsert: true });
     res.status(201).json(echo);
   } catch (error) {
-    res.status(400).json({ error: 'Invalid echo broadcast' });
+    res.status(400).json({ error: 'Invalid broadcast' });
   }
 });
 
@@ -169,7 +181,7 @@ app.get('/api/messages/:userId', async (req: any, res: any): Promise<void> => {
   }
 });
 
-// --- SOCKET ENGINE ---
+// --- 5. SOCKET ENGINE ---
 io.on('connection', (socket: Socket) => {
   socket.on('join_circle', ({ roomId, userId, name }) => {
     socket.join(roomId);
@@ -196,7 +208,7 @@ io.on('connection', (socket: Socket) => {
       type: msgData.type || 'text',
       sharedCircleId: msgData.sharedCircleId,
       isRead: false
-    };
+    } as any;
     if (isDbConnected) {
       try { await getCollection<Message>('messages').insertOne(message); } catch (e) {}
     }
@@ -214,7 +226,7 @@ io.on('connection', (socket: Socket) => {
   });
 });
 
-// --- STATIC ASSETS & SPA TERMINATION ---
+// --- 6. STATIC ASSETS & SPA TERMINATION ---
 const distPath = path.join(__dirname, 'dist');
 if (fs.existsSync(distPath)) {
   app.use(express.static(distPath));
@@ -225,56 +237,67 @@ if (fs.existsSync(distPath)) {
  * We use a terminal middleware instead of a wildcard string ('*') to avoid
  * Express 5 path-to-regexp v8 crashes.
  */
-// Fixed type errors for req.path, res.status, res.send
-app.use((req: any, res: any) => {
+// Fix: Added explicit path '/' and NextFunction to the signature to satisfy Express RequestHandler overloads
+app.use('/', (req: Request, res: Response, _next: NextFunction) => {
   // Guard: Never serve HTML for missing API endpoints
   if (req.path.startsWith('/api')) {
     return res.status(404).json({ error: 'Endpoint not found in Sanctuary records' });
   }
 
-  const indexPath = path.join(distPath, 'index.html');
-  const rootIndexPath = path.join(__dirname, 'index.html');
-  const finalPath = fs.existsSync(indexPath) ? indexPath : rootIndexPath;
+  const distIndex = path.join(distPath, 'index.html');
+  const rootIndex = path.join(__dirname, 'index.html');
+  const targetPath = fs.existsSync(distIndex) ? distIndex : rootIndex;
 
-  if (fs.existsSync(finalPath)) {
-    fs.readFile(finalPath, 'utf8', (err, html) => {
-      if (err) return res.status(500).send('Integrity check failed.');
-      
-      const apiKey = process.env.API_KEY || '';
-      const injection = `<script>window.process = { env: { API_KEY: ${JSON.stringify(apiKey)} } };</script>`;
-      res.send(html.replace('<head>', `<head>${injection}`));
-    });
-  } else {
-    res.status(404).send('Sanctuary Offline: Core systems missing.');
+  if (!fs.existsSync(targetPath)) {
+    return res.status(500).send('Sanctuary Configuration Error: No index.html found');
   }
+
+  return fs.readFile(targetPath, 'utf8', (err, html) => {
+    if (err) {
+      console.error('[SPA ERROR] Could not read index.html:', err);
+      return res.status(500).send('Sanctuary Integrity Failure');
+    }
+    return res.status(200).send(html);
+  });
 });
 
-// Global Error Handler - Fixed type errors for res.status and res.json
-app.use((err: any, _req: any, res: any, _next: NextFunction) => {
-  console.error('Sanctuary Anomaly:', err);
-  res.status(500).json({ error: 'Temporal resonance error' });
+// Global Error Handler
+app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  console.error('[SYSTEM ANOMALY]', err);
+  res.status(500).json({ error: 'Internal Temporal Resonance Error' });
 });
 
-// --- LIFECYCLE ---
-const shutdown = async () => {
-  console.log('🛑 Shutting down Sanctuary...');
+// --- 7. LIFECYCLE ---
+const shutdown = async (signal: string) => {
+  console.log(`🛑 Received ${signal}. Shutting down Sanctuary...`);
   io.close();
-  if (isDbConnected && dbClient) await dbClient.close();
-  httpServer.close(() => process.exit(0));
+  if (isDbConnected && dbClient) {
+    try {
+      await dbClient.close();
+      console.log('✅ Database connection closed.');
+    } catch (e) {
+      console.error('❌ Error closing database:', e);
+    }
+  }
+  httpServer.close(() => {
+    console.log('✅ HTTP Server closed. Exit 0.');
+    process.exit(0);
+  });
 };
 
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
+process.on('SIGTERM', () => shutdown('SIGTERM')); process.on('SIGINT', () => shutdown('SIGINT'));
 
 async function startServer() {
+  console.log('🚀 Initiating Sanctuary Engine...');
   await connectToDatabase();
+  
   httpServer.listen(SERVER_PORT, '0.0.0.0', () => {
-    console.log(`🚀 Sanctuary Engine Active on port ${SERVER_PORT}`);
+    console.log(`🌍 Sanctuary Online: http://0.0.0.0:${SERVER_PORT}`);
     console.log(`🔑 Key Injection Ready`);
   });
 }
 
 startServer().catch(e => {
-  console.error('Fatal Sanctuary Start Error:', e);
+  console.error('Fatal Startup Error:', e);
   process.exit(1);
 });

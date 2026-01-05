@@ -1,113 +1,175 @@
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
-import { GoogleGenAI, Modality, Type } from "@google/genai";
-
-function decodeBase64(base64: string) {
+// Utility function to decode base64 to ArrayBuffer
+function decodeBase64(base64: string): ArrayBuffer {
   const binaryString = atob(base64);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
     bytes[i] = binaryString.charCodeAt(i);
   }
-  return bytes;
-}
-
-async function decodeAudioData(
-  data: Uint8Array,
-  ctx: AudioContext,
-  sampleRate: number,
-  numChannels: number,
-): Promise<AudioBuffer> {
-  const dataInt16 = new Int16Array(data.buffer);
-  const frameCount = dataInt16.length / numChannels;
-  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
-
-  for (let channel = 0; channel < numChannels; channel++) {
-    const channelData = buffer.getChannelData(channel);
-    for (let i = 0; i < frameCount; i++) {
-      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
-    }
-  }
-  return buffer;
+  return bytes.buffer;
 }
 
 /**
- * GEMINI SERVICE BRIDGE
- * Resolves API_KEY from runtime-injected process.env
+ * GEMINI SERVICE
+ * Handles all interactions with the Google Gemini AI API
  */
-const getAiClient = () => {
-  // Try injected key first (Production), fallback to process.env (Vite build-time)
-  const apiKey = (window as any).process?.env?.API_KEY || (process as any).env?.API_KEY || "";
-  if (!apiKey) {
-    console.error("[CRITICAL] Gemini API Key is missing from runtime environment.");
-  }
-  return new GoogleGenAI({ apiKey });
-};
+class GeminiService {
+  private static instance: GeminiService;
+  private genAI: GoogleGenerativeAI;
+  private model: any; // Using any to bypass TypeScript issues with the SDK
 
-export const geminiService = {
-  // Transcribe audio and format into a structured reflection
-  async transcribeAndFormat(audioBase64: string): Promise<{ title: string; content: string }> {
-    const ai = getAiClient();
-    
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: [
+  private constructor(apiKey: string) {
+    if (!apiKey) {
+      throw new Error('API key is required for Gemini service');
+    }
+    this.genAI = new GoogleGenerativeAI(apiKey);
+    this.model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+  }
+
+  public static getInstance(apiKey?: string): GeminiService {
+    if (!GeminiService.instance && apiKey) {
+      GeminiService.instance = new GeminiService(apiKey);
+    } else if (!GeminiService.instance) {
+      throw new Error('GeminiService must be initialized with an API key first');
+    }
+    return GeminiService.instance;
+  }
+
+  public static initialize(apiKey: string): void {
+    if (!GeminiService.instance) {
+      GeminiService.instance = new GeminiService(apiKey);
+    }
+  }
+
+  /**
+   * Transcribe audio and format it into a structured reflection
+   */
+  public async transcribeAndFormat(audioBase64: string): Promise<{ title: string; content: string }> {
+    try {
+      // Remove data URL prefix if present
+      const base64Data = audioBase64.includes('base64,') 
+        ? audioBase64.split(',')[1] 
+        : audioBase64;
+      
+      const mimeType = this.determineMimeType(audioBase64);
+      
+      // Create a chat session
+      const chat = this.model.startChat({
+        generationConfig: {
+          maxOutputTokens: 1000,
+        },
+      });
+
+      // Send the audio as a file
+      const result = await chat.sendMessage([
         {
-          parts: [
-            { inlineData: { data: audioBase64, mimeType: 'audio/webm;codecs=opus' } },
-            { text: "Analyze the tone of this voice note. Transcribe it and turn it into a high-quality, urban-style reflection. Format it with a title and Markdown content." }
-          ]
+          text: `Please analyze this audio and create a structured reflection with:
+          1. A concise, engaging title (max 10 words)
+          2. A well-formatted content section with paragraphs
+          3. Key insights or action items as bullet points
+          
+          Format the response as follows:
+          
+          [Title]: Your Title Here
+          [Content]: 
+          Your detailed content here with proper paragraphs.
+          
+          [Key Insights]:
+          - Insight 1
+          - Insight 2`
+        },
+        {
+          fileData: {
+            mimeType,
+            fileUri: `data:${mimeType};base64,${base64Data}`
+          }
         }
-      ],
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            title: { type: Type.STRING },
-            content: { type: Type.STRING },
-          },
-          required: ['title', 'content'],
-        }
-      }
-    });
+      ]);
+
+      const response = await result.response;
+      const text = response.text();
+      return this.parseResponse(text);
+      
+    } catch (error) {
+      console.error('Gemini API Error:', error);
+      throw new Error('Failed to process audio with Gemini: ' + (error as Error).message);
+    }
+  }
+
+  /**
+   * Parse the response from Gemini into title and content
+   */
+  private parseResponse(text: string): { title: string; content: string } {
+    // Default values
+    let title = 'Untitled Reflection';
+    let content = 'No content available';
 
     try {
-      const jsonStr = response.text || "{}";
-      return JSON.parse(jsonStr.trim());
+      // Try to extract title and content using regex
+      const titleMatch = text.match(/\[Title\]:\s*(.+?)(?=\n|$)/i);
+      const contentMatch = text.match(/\[Content\]:\s*([\s\S]+?)(?=\n\[|$)/i);
+      
+      if (titleMatch && titleMatch[1]) {
+        title = titleMatch[1].trim();
+      } else {
+        // Fallback: Use first line as title if no [Title] tag found
+        const firstLine = text.split('\n')[0]?.trim();
+        if (firstLine) title = firstLine;
+      }
+
+      if (contentMatch && contentMatch[1]) {
+        content = contentMatch[1].trim();
+      } else {
+        // Fallback: Use everything after the title as content
+        const contentStart = text.indexOf('\n');
+        if (contentStart > 0) {
+          content = text.substring(contentStart).trim();
+        }
+      }
     } catch (e) {
-      return { title: "Vocalized Reflection", content: response.text || "" };
+      console.warn('Error parsing Gemini response, using fallback formatting', e);
+      content = text.trim();
     }
-  },
 
-  // Play text as speech
-  async playSpeech(text: string, ctx: AudioContext) {
-    const ai = getAiClient();
-
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-preview-tts",
-      contents: [{ parts: [{ text: `Read this reflection with a calm, empathetic, late-night urban tone: ${text}` }] }],
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: {
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
-        },
-      },
-    });
-
-    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-    if (base64Audio) {
-      const audioBuffer = await decodeAudioData(
-        decodeBase64(base64Audio),
-        ctx,
-        24000,
-        1
-      );
-      const source = ctx.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(ctx.destination);
-      source.start();
-      return source;
-    }
-    return null;
+    return { title, content };
   }
-};
+
+  /**
+   * Determine MIME type from base64 string
+   */
+  private determineMimeType(base64: string): string {
+    // Default to WAV, but you can extend this to detect other formats
+    if (base64.startsWith('data:audio/wav')) return 'audio/wav';
+    if (base64.startsWith('data:audio/mp3')) return 'audio/mp3';
+    if (base64.startsWith('data:audio/mpeg')) return 'audio/mpeg';
+    if (base64.startsWith('data:audio/ogg')) return 'audio/ogg';
+    if (base64.startsWith('data:audio/webm')) return 'audio/webm';
+    return 'audio/wav'; // default
+  }
+}
+
+// Initialize with environment variable
+const API_KEY = (() => {
+  // In browser, check for globally defined API key
+  if (typeof window !== 'undefined' && (window as any).API_KEY) {
+    return (window as any).API_KEY;
+  }
+  // In Node.js, check environment variables
+  if (typeof process !== 'undefined' && process.env) {
+    return process.env.API_KEY;
+  }
+  return null;
+})();
+
+// Only initialize if API key is available
+if (API_KEY) {
+  try {
+    GeminiService.initialize(API_KEY);
+  } catch (error) {
+    console.error('Failed to initialize Gemini service:', error);
+  }
+}
+
+// Export a singleton instance
+export const geminiService = GeminiService.getInstance();

@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { User, EchoEntry } from '../types';
 import { geminiService } from '../services/gemini';
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 interface Props {
   user: User;
@@ -91,21 +91,32 @@ const CreatorStudio: React.FC<Props> = ({ user, onPublish }) => {
 
   const getGuidePrompt = async () => {
     if (!content && !title) {
-       setRitualPrompt("Start writing first, and I will mirror your thoughts.");
-       return;
+      setRitualPrompt("Start writing first, and I will mirror your thoughts.");
+      return;
     }
+    
     setIsGuiding(true);
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    
     try {
-        const response = await ai.models.generateContent({
-          model: 'gemini-3-flash-preview',
-          contents: `User is writing a reflection: "${title} ${content}". Act as a Zen Sanctuary Guide. Provide one short, soulful ritualistic prompt (max 20 words) that helps them deepen this reflection. Avoid cliches.`
-        });
-        setRitualPrompt(response.text || null);
+      const apiKey = process.env.VITE_GOOGLE_API_KEY || '';
+      const ai = new GoogleGenerativeAI(apiKey);
+      const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      
+      const prompt = `User is writing a reflection: "${title} ${content}". 
+      Act as a Zen Sanctuary Guide. Provide one short, soulful ritualistic prompt (max 20 words) 
+      that helps them deepen this reflection. Avoid cliches.`;
+      
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const text = response.text();
+      
+      setRitualPrompt(text || "Breathe. Your words have weight.");
     } catch (e) {
-        setRitualPrompt("Breathe. Your words have weight.");
+      console.error("Error generating guide prompt:", e);
+      setRitualPrompt("Breathe. Your words have weight.");
+    } finally {
+      setIsGuiding(false);
     }
-    setIsGuiding(false);
   };
 
   const publish = () => {

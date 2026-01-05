@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { EchoEntry } from '../types';
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 interface Props {
   echoes: EchoEntry[];
@@ -38,36 +38,35 @@ const SearchDiscovery: React.FC<Props> = ({ echoes, onSelectEcho }) => {
     if (!q) return;
 
     setIsSearching(true);
-    // Initialize GoogleGenAI instance right before making the API call
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    // Initialize GoogleGenerativeAI instance right before making the API call
+    const apiKey = process.env.VITE_GOOGLE_API_KEY || '';
+    const ai = new GoogleGenerativeAI(apiKey);
     
     try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: `Current User Sentiment Query: "${q}". \nAvailable Echoes: ${JSON.stringify(echoes.map(e => ({ id: e.id, title: e.title, content: e.content.substring(0, 150) })))}. \nRank the echoes by emotional resonance.`,
-        config: { 
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              matchIds: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-                description: 'IDs of echoes that match the sentiment.'
-              },
-              reason: {
-                type: Type.STRING,
-                description: 'A short empathetic sentence explaining why these resonances match the mood.'
-              }
-            },
-            required: ['matchIds', 'reason']
-          }
-        }
-      });
-
-      // Extract JSON string from .text property
-      const jsonStr = response.text || "{}";
-      const data = JSON.parse(jsonStr.trim());
+      const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      
+      const prompt = `Current User Sentiment Query: "${q}". 
+      \nAvailable Echoes: ${JSON.stringify(echoes.map(e => ({
+        id: e.id,
+        title: e.title,
+        content: e.content.substring(0, 150)
+      })))}
+      
+      Analyze the user's sentiment and match it with the most relevant echoes.
+      
+      Respond with a JSON object in this exact format:
+      {
+        "matchIds": ["id1", "id2", ...],
+        "reason": "A short empathetic sentence explaining why these resonances match the mood."
+      }`;
+      
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const text = response.text();
+      
+      // Extract JSON from the response
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      const data = jsonMatch ? JSON.parse(jsonMatch[0]) : { matchIds: [], reason: 'No matches found' };
       const matched = echoes.filter(e => data.matchIds?.includes(e.id));
       setResults(matched);
       setMatchExplanation(data.reason || '');
